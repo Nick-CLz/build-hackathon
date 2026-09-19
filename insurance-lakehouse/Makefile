@@ -309,3 +309,7 @@ databricks-governance: ## Execute governance/unity_catalog.sql against Unity Cat
 	$(PY) governance/generate_unity_catalog.py --catalog $(or $(CATALOG),insurance_dev)
 	$(PY) scripts/databricks_apply_governance.py --catalog $(or $(CATALOG),insurance_dev) \
 	  $(if $(DRY),--dry-run,)
+
+.PHONY: databricks-groups
+databricks-groups: ## Create the workspace groups the grants reference (needs scim scope)
+	$(PY) scripts/databricks_groups.py
