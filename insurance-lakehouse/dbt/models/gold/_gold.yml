@@ -68,6 +68,20 @@ models:
       - name: date_key
         data_tests: [unique, not_null]
 
+  - name: dim_health_profile
+    description: >
+      Grain: one row per policy_id with a health declaration. Every sensitive
+      column is FULLY redacted -- a partial mask would still reveal that a
+      condition was declared, which is itself health information. Unmasked
+      access is granted to restricted_health via a Unity Catalog column mask.
+    columns:
+      - name: policy_id
+        data_tests: [unique, not_null]
+      - name: pre_existing_conditions
+        meta: {pii: true, pii_type: health, sensitivity: restricted, masked: true}
+      - name: bmi_band
+        meta: {pii: true, pii_type: health, sensitivity: restricted, masked: true}
+
   - name: fct_written_premium
     description: >
       Grain: one row per policy_id. Written premium is recognised in FULL at

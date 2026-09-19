@@ -137,6 +137,22 @@ sources:
     partition_by: [_batch_date]
     freshness: {warn_after_hours: 12, error_after_hours: 24}
 
+  - name: events_health_declarations
+    description: >
+      Underwriting health declarations for adjustable health policies. SENSITIVE
+      personal data under PDPA s.26: separate stream, separate governance, fully
+      redacted outside restricted models.
+    format: json
+    path: events/health_declarations/dt=*/health_declarations_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [declaration_id]
+    timestamp_column: declared_at
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}
+    pii_columns:
+      pre_existing_conditions: {pii_type: health, sensitivity: restricted}
+      bmi_band: {pii_type: health, sensitivity: restricted}
+
   # ------------------------------------------------------------------- CDC
   - name: cdc_policies
     description: >

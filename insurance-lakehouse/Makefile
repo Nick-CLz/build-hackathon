@@ -280,3 +280,7 @@ ci: ## Run every CI step locally, in the same order as the workflow
 	  || { echo "FAIL: DAG import errors"; cat /tmp/lakehouse_dag_errs.log; exit 1; }
 	@echo ""
 	@echo "===== CI PASSED ====="
+
+.PHONY: governance
+governance: ## Generate governance/unity_catalog.sql from PII metadata
+	$(PY) governance/generate_unity_catalog.py --catalog $(or $(CATALOG),insurance_dev)

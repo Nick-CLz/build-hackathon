@@ -152,6 +152,26 @@ models:
       - name: rate
         data_tests: [not_null]
 
+  - name: stg_health_declarations
+    description: >
+      Grain: one row per declaration_id. SENSITIVE personal data under PDPA
+      s.26. Values are intact here because silver is the restricted layer;
+      redaction happens at the gold boundary. Access to silver is the primary
+      control, masking in gold the second line.
+    columns:
+      - name: declaration_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests:
+          - relationships:
+              config: {severity: warn}
+              arguments: {to: ref('silver_policies'), field: policy_id}
+      - name: pre_existing_conditions
+        description: Declared conditions. Fully redacted outside restricted models.
+        meta: {pii: true, pii_type: health, sensitivity: restricted}
+      - name: bmi_band
+        meta: {pii: true, pii_type: health, sensitivity: restricted}
+
   - name: silver_policies
     description: >
       Grain: one row per policy_id -- current state. Incremental MERGE on

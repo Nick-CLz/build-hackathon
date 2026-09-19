@@ -428,6 +428,33 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
     record(p, clm)
     if m.malformed_records and clm:
         malformed += _append_malformed_jsonl(p, 2)
+
+    # Health declarations: their own stream, because underwriting emits them
+    # separately from the policy record -- and because sensitive personal data
+    # under PDPA is easier to govern when it is not mixed into a general feed.
+    health = [
+        p
+        for p in u.policies
+        if p["emit_day"] == day and p["line_of_business"] == "health"
+    ]
+    p = f"{root}/events/health_declarations/dt={dt}/health_declarations_{stamp}.jsonl"
+    _write_jsonl(
+        p,
+        [
+            {
+                "declaration_id": f"HD-{h['policy_id']}",
+                "policy_id": h["policy_id"],
+                "customer_id": h["customer_id"],
+                "declared_at": str(h["inception_date"]),
+                "pre_existing_conditions": h.get("pre_existing_conditions", "none"),
+                "bmi_band": h.get("bmi_band"),
+                "emit_day": day,
+            }
+            for h in health
+        ],
+    )
+    record(p, health)
+
     summary["defects"]["late_claims"] = len([c for c in clm if c["is_late_reported"]])
 
     # ---- CDC change feed for policies ---------------------------------

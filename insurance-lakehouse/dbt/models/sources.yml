@@ -201,6 +201,36 @@ sources:
           error_after:
             count: 24
             period: hour
+      - name: events_health_declarations
+        description: 'Underwriting health declarations for adjustable health policies. SENSITIVE personal
+          data under PDPA s.26: separate stream, separate governance, fully redacted outside restricted
+          models.'
+        meta:
+          primary_key:
+            - declaration_id
+          source_format: json
+          landing_path: events/health_declarations/dt=*/health_declarations_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour
+        columns:
+          - name: pre_existing_conditions
+            description: PII (health, sensitivity restricted).
+            meta:
+              pii: true
+              pii_type: health
+              sensitivity: restricted
+          - name: bmi_band
+            description: PII (health, sensitivity restricted).
+            meta:
+              pii: true
+              pii_type: health
+              sensitivity: restricted
       - name: cdc_policies
         description: Debezium-style change feed for policies, with op (I/U/D) and ts. Bronze keeps every
           change event; silver collapses to latest-per-key.
