@@ -10,4 +10,4 @@ select
     pt.commission_rate,
     pt.onboarded_date,
     datediff(current_date(), pt.onboarded_date) / 365.25 as tenure_years
-from {{ ref('stg_partners') }} pt
+from {{ ref('stg_partners') }} as pt

@@ -33,10 +33,10 @@ with deduped as (
     select *
     from (
         select
-            cast(rate_date as date)             as rate_date,
-            {{ clean_code('from_currency') }}   as from_currency,
-            {{ clean_code('to_currency') }}     as to_currency,
-            cast(rate as decimal(18, 8))        as rate,
+            cast(rate_date as date) as rate_date,
+            {{ clean_code('from_currency') }} as from_currency,
+            {{ clean_code('to_currency') }} as to_currency,
+            cast(rate as decimal(18, 8)) as rate,
             _ingested_at,
             {{ dedupe_latest('cast(rate_date as date), from_currency, to_currency',
                              '_ingested_at') }} as row_num

@@ -5,12 +5,12 @@
 select
     v.vehicle_id,
     v.customer_id,
-    {{ mask_pii('v.plate_no', 'plate') }}    as plate_masked,
+    {{ mask_pii('v.plate_no', 'plate') }} as plate_masked,
     v.plate_province,
     {{ mask_pii('v.chassis_no', 'chassis') }} as chassis_masked,
     v.make,
     v.model,
-    concat(v.make, ' ', v.model)             as make_model,
+    concat(v.make, ' ', v.model) as make_model,
     v.manufacture_year,
     v.vehicle_age_years,
     case
@@ -27,4 +27,4 @@ select
     end as engine_class,
     v.vehicle_value_local,
     v.country
-from {{ ref('stg_vehicles') }} v
+from {{ ref('stg_vehicles') }} as v

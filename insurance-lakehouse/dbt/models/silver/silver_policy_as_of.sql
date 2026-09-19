@@ -37,11 +37,11 @@ select
     written_premium_thb,
     sum_insured_thb,
     record_source,
-    cast(dbt_valid_from as date)                    as valid_from,
-    cast(dbt_valid_to as date)                      as valid_to,
-    dbt_valid_to is null                            as is_current,
+    cast(dbt_valid_from as date) as valid_from,
+    cast(dbt_valid_to as date) as valid_to,
+    dbt_valid_to is null as is_current,
     row_number() over (
         partition by policy_id order by dbt_valid_from
-    )                                               as version_number,
-    count(*) over (partition by policy_id)          as total_versions
+    ) as version_number,
+    count(*) over (partition by policy_id) as total_versions
 from {{ ref('policies_snapshot') }}

@@ -213,3 +213,70 @@ airflow-up: ## Start Airflow via the Astro CLI (webserver on :8080)
 .PHONY: airflow-down
 airflow-down: ## Stop the Astro environment
 	cd airflow && astro dev stop
+
+# ---------------------------------------------------------------- pipeline
+.PHONY: all
+all: ## Full pipeline from clean: data -> bronze -> dbt build -> report
+	$(MAKE) data DAY=1
+	$(MAKE) bronze
+	$(MAKE) dbt-deps
+	$(MAKE) dbt-build
+	$(MAKE) report
+	@echo ""
+	@echo "Pipeline complete. Report: reports/observability.html"
+
+.PHONY: demo
+demo: ## Day 1 -> day 2, then print proof of every hard case
+	@echo "########## DAY 1: initial load ##########"
+	$(MAKE) --no-print-directory data DAY=1
+	$(MAKE) --no-print-directory bronze
+	$(MAKE) --no-print-directory dbt-build
+	@echo ""
+	@echo "########## DAY 2: updates, duplicates, late claims, schema drift ##########"
+	$(MAKE) --no-print-directory data DAY=2
+	$(MAKE) --no-print-directory bronze
+	$(MAKE) --no-print-directory dbt-build
+	$(MAKE) --no-print-directory report
+	@echo ""
+	@echo "########## PROOF ##########"
+	$(PY) scripts/demo_proof.py
+
+# ---------------------------------------------------------------- ci
+.PHONY: ci
+ci: ## Run every CI step locally, in the same order as the workflow
+	@echo "===== 1/4 lint ====="
+	$(RUFF) check .
+	$(RUFF) format --check .
+	$(VENV)/bin/yamllint -c .yamllint.yml .
+	$(VENV)/bin/sqlfluff lint dbt/
+	@echo "===== 2/4 pytest ====="
+	$(PYTEST) tests/ -m "not slow" -q
+	$(PYTEST) tests/ -m slow -q
+	@echo "===== 3/4 end-to-end pipeline ====="
+	$(MAKE) --no-print-directory clean
+	$(MAKE) --no-print-directory dbt-deps
+	$(MAKE) --no-print-directory data DAY=1
+	$(MAKE) --no-print-directory bronze
+	@$(MAKE) --no-print-directory bronze | tee /tmp/lakehouse_second_ingest.log >/dev/null; \
+	  grep -q UP_TO_DATE /tmp/lakehouse_second_ingest.log \
+	    || { echo "FAIL: re-ingest was not idempotent"; exit 1; }
+	@echo "  idempotency: second ingest reported UP_TO_DATE"
+	$(MAKE) --no-print-directory dbt-build
+	$(MAKE) --no-print-directory data DAY=2
+	$(MAKE) --no-print-directory bronze
+	$(MAKE) --no-print-directory dbt-build
+	$(MAKE) --no-print-directory report
+	$(PY) scripts/demo_proof.py
+	@echo "===== 4/4 airflow DAG integrity ====="
+	AIRFLOW_HOME=$(CURDIR)/lakehouse/airflow_home LAKEHOUSE_REPO=$(CURDIR) \
+	  AIRFLOW__CORE__LOAD_EXAMPLES=False \
+	  $(AIRFLOW_VENV)/bin/python -m pytest airflow/tests/dags/ -q
+	@mkdir -p lakehouse/airflow_home
+	@$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow db migrate >/dev/null 2>&1
+	@$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow dags reserialize >/dev/null 2>&1
+	@$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow dags list-import-errors 2>&1 \
+	  | tee /tmp/lakehouse_dag_errs.log | grep -q "No data found" \
+	  && echo "  DAG imports cleanly" \
+	  || { echo "FAIL: DAG import errors"; cat /tmp/lakehouse_dag_errs.log; exit 1; }
+	@echo ""
+	@echo "===== CI PASSED ====="

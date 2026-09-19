@@ -33,11 +33,13 @@ select
     p.is_refund,
     p.batch_date,
     current_timestamp() as _silver_loaded_at
-from {{ ref('stg_premium_payments') }} p
+from {{ ref('stg_premium_payments') }} as p
 {{ fx_join('p.currency', 'p.effective_date') }}
 
 {% if is_incremental() %}
-where p.batch_date >= date_sub(
-    (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
-    {{ var('claims_lookback_days') }})
+where
+    p.batch_date >= date_sub(
+        (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
+        {{ var('claims_lookback_days') }}
+    )
 {% endif %}

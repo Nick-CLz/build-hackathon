@@ -27,4 +27,4 @@ select
     end as cover_description,
     p.base_premium_local,
     p.default_sum_insured
-from {{ ref('stg_products') }} p
+from {{ ref('stg_products') }} as p

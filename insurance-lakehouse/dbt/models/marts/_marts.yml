@@ -31,11 +31,16 @@ models:
         data_tests: [not_null]
 
     data_tests:
+      # severity and where are TEST config, so they belong in `config`, not in
+      # `arguments`. Nested under arguments they are silently ignored: the test
+      # then ran over every cell -- including the low-credibility ones it was
+      # explicitly scoped to exclude -- and errored the build instead of warning.
       - dbt_utils.expression_is_true:
-          config: {severity: warn}
+          config:
+            severity: warn
+            where: "is_credible"
           arguments:
             expression: "loss_ratio <= 3"
-            config: {where: "is_credible"}
 
   - name: mart_quote_conversion
     description: >

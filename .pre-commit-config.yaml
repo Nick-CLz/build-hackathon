@@ -1,0 +1,52 @@
+---
+# Repo-root config, because pre-commit only reads it from the root. Every hook
+# is scoped to insurance-lakehouse/ so the unrelated hackathon project in this
+# repository is untouched.
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: ^insurance-lakehouse/
+        exclude: \.csv$|\.jsonl$
+      - id: end-of-file-fixer
+        files: ^insurance-lakehouse/
+        exclude: \.csv$|\.jsonl$
+      - id: check-yaml
+        files: ^insurance-lakehouse/
+        # dbt and Astro YAML carry Jinja and multi-doc separators that the
+        # generic parser rejects; yamllint below checks them properly.
+        exclude: ^insurance-lakehouse/(dbt|airflow)/
+      - id: check-added-large-files
+        files: ^insurance-lakehouse/
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^insurance-lakehouse/
+      - id: ruff-format
+        files: ^insurance-lakehouse/
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        files: ^insurance-lakehouse/.*\.(yml|yaml)$
+        args: [-c, insurance-lakehouse/.yamllint.yml]
+
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 4.3.0
+    hooks:
+      - id: sqlfluff-lint
+        files: ^insurance-lakehouse/dbt/.*\.sql$
+        # The jinja templater needs no warehouse connection, so this runs in
+        # under a second and works in CI without credentials.
+        args: [--config, insurance-lakehouse/.sqlfluff]

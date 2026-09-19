@@ -32,9 +32,11 @@ with cdc_latest as (
             ) as rn
         from {{ ref('stg_policies_cdc') }}
         {% if is_incremental() %}
-        where batch_date >= date_sub(
-            (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
-            {{ var('claims_lookback_days') }})
+        where
+            batch_date >= date_sub(
+                (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
+                {{ var('claims_lookback_days') }}
+            )
         {% endif %}
     )
     where rn = 1
@@ -42,10 +44,21 @@ with cdc_latest as (
 
 from_cdc as (
     select
-        policy_id, customer_id, vehicle_id, product_code, partner_code,
-        country, currency, inception_date, expiry_date,
-        sum_insured, written_premium, policy_status,
-        source_updated_at, change_ts, 'cdc' as record_source,
+        policy_id,
+        customer_id,
+        vehicle_id,
+        product_code,
+        partner_code,
+        country,
+        currency,
+        inception_date,
+        expiry_date,
+        sum_insured,
+        written_premium,
+        policy_status,
+        source_updated_at,
+        change_ts,
+        'cdc' as record_source,
         cast(null as string) as national_id,
         cast(null as string) as plate_no,
         batch_date
@@ -56,19 +69,28 @@ from_cdc as (
 from_partner as (
     select
         p.policy_id,
-        cast(null as string)    as customer_id,
-        cast(null as string)    as vehicle_id,
-        p.product_code, p.partner_code,
+        cast(null as string) as customer_id,
+        cast(null as string) as vehicle_id,
+        p.product_code,
+        p.partner_code,
         case when p.currency = 'THB' then 'TH' else 'ID' end as country,
-        p.currency, p.inception_date, p.expiry_date,
-        p.sum_insured, p.written_premium, p.policy_status,
+        p.currency,
+        p.inception_date,
+        p.expiry_date,
+        p.sum_insured,
+        p.written_premium,
+        p.policy_status,
         cast(p.source_updated_at as date) as source_updated_at,
         p.source_updated_at as change_ts,
         'partner' as record_source,
-        p.national_id, p.plate_no,
+        p.national_id,
+        p.plate_no,
         p.batch_date
-    from {{ ref('stg_partner_policies') }} p
-    where not exists (select 1 from from_cdc c where c.policy_id = p.policy_id)
+    from {{ ref('stg_partner_policies') }} as p
+    where not exists (
+        select 1 from from_cdc as c
+        where c.policy_id = p.policy_id
+    )
 ),
 
 combined as (
@@ -103,5 +125,5 @@ select
     c.change_ts,
     c.batch_date,
     current_timestamp() as _silver_loaded_at
-from combined c
+from combined as c
 {{ fx_join('c.currency', 'c.inception_date') }}

@@ -38,41 +38,69 @@
 
 with internal as (
     select
-        claim_id, claim_no, policy_id, loss_date, reported_date, settled_date,
-        reporting_lag_days, claim_cause, claim_type, claim_status,
-        gross_incurred, paid_amount, reserve_amount, currency, at_fault,
-        'internal' as record_source, batch_date, ingested_at
+        claim_id,
+        claim_no,
+        policy_id,
+        loss_date,
+        reported_date,
+        settled_date,
+        reporting_lag_days,
+        claim_cause,
+        claim_type,
+        claim_status,
+        gross_incurred,
+        paid_amount,
+        reserve_amount,
+        currency,
+        at_fault,
+        'internal' as record_source,
+        batch_date,
+        ingested_at
     from {{ ref('stg_claims') }}
 
     {% if is_incremental() %}
     -- Re-read a window of batches, not just the newest, so late-reported
     -- claims land in the period they belong to.
-    where batch_date >= date_sub(
-        (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
-        {{ var('claims_lookback_days') }})
+    where
+        batch_date >= date_sub(
+            (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
+            {{ var('claims_lookback_days') }}
+        )
     {% endif %}
 ),
 
 partner as (
     select
-        pc.claim_no as claim_id, pc.claim_no, pc.policy_id,
-        pc.loss_date, pc.reported_date,
+        pc.claim_no as claim_id,
+        pc.claim_no,
+        pc.policy_id,
+        pc.loss_date,
+        pc.reported_date,
         cast(null as date) as settled_date,
-        pc.reporting_lag_days, pc.claim_cause,
+        pc.reporting_lag_days,
+        pc.claim_cause,
         cast(null as string) as claim_type,
-        pc.claim_status, pc.gross_incurred,
+        pc.claim_status,
+        pc.gross_incurred,
         cast(null as decimal(18, 2)) as paid_amount,
         cast(null as decimal(18, 2)) as reserve_amount,
         pc.currency,
         cast(null as boolean) as at_fault,
-        'partner' as record_source, pc.batch_date, pc.ingested_at
-    from {{ ref('stg_partner_claims') }} pc
-    where not exists (select 1 from internal i where i.claim_no = pc.claim_no)
+        'partner' as record_source,
+        pc.batch_date,
+        pc.ingested_at
+    from {{ ref('stg_partner_claims') }} as pc
+    where
+        not exists (
+            select 1 from internal as i
+            where i.claim_no = pc.claim_no
+        )
 
     {% if is_incremental() %}
     and pc.batch_date >= date_sub(
         (select coalesce(max(batch_date), '1900-01-01') from {{ this }}),
-        {{ var('claims_lookback_days') }})
+        {{ var('claims_lookback_days') }}
+    )
     {% endif %}
 ),
 
@@ -109,5 +137,5 @@ select
     c.record_source,
     c.batch_date,
     current_timestamp() as _silver_loaded_at
-from combined c
+from combined as c
 {{ fx_join('c.currency', 'c.loss_date') }}

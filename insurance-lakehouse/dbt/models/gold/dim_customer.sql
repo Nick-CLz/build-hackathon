@@ -10,13 +10,13 @@
     the property that makes hashing preferable to redaction for a key. */
 select
     c.customer_id,
-    {{ mask_pii('c.first_name', 'name') }}      as first_name_masked,
-    {{ mask_pii('c.last_name', 'name') }}       as last_name_masked,
+    {{ mask_pii('c.first_name', 'name') }} as first_name_masked,
+    {{ mask_pii('c.last_name', 'name') }} as last_name_masked,
     {{ mask_pii('c.national_id', 'national_id') }} as national_id_hash,
-    {{ mask_pii('c.email', 'email') }}          as email_masked,
-    {{ mask_pii('c.phone', 'phone') }}          as phone_masked,
-    {{ mask_pii('c.address', 'address') }}      as address_masked,
-    {{ mask_pii('c.date_of_birth', 'dob') }}    as birth_year,
+    {{ mask_pii('c.email', 'email') }} as email_masked,
+    {{ mask_pii('c.phone', 'phone') }} as phone_masked,
+    {{ mask_pii('c.address', 'address') }} as address_masked,
+    {{ mask_pii('c.date_of_birth', 'dob') }} as birth_year,
     c.province,
     c.country,
     c.age_years,
@@ -29,4 +29,4 @@ select
         else '65+'
     end as age_band,
     c.created_date
-from {{ ref('stg_customers') }} c
+from {{ ref('stg_customers') }} as c

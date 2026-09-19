@@ -24,15 +24,15 @@ spine as (
 select
     date_day,
     cast(date_format(date_day, 'yyyyMMdd') as int) as date_key,
-    year(date_day)                        as calendar_year,
-    year(date_day) + 543                  as buddhist_year,
-    quarter(date_day)                     as calendar_quarter,
-    month(date_day)                       as calendar_month,
-    date_format(date_day, 'MMM')          as month_name,
-    date_trunc('month', date_day)         as month_start,
-    last_day(date_day)                    as month_end,
-    date_format(date_day, 'yyyy-MM')      as year_month,
-    dayofweek(date_day)                   as day_of_week,
-    dayofweek(date_day) in (1, 7)         as is_weekend,
-    date_day = last_day(date_day)         as is_month_end
+    year(date_day) as calendar_year,
+    year(date_day) + 543 as buddhist_year,
+    quarter(date_day) as calendar_quarter,
+    month(date_day) as calendar_month,
+    date_format(date_day, 'MMM') as month_name,
+    date_trunc('month', date_day) as month_start,
+    last_day(date_day) as month_end,
+    date_format(date_day, 'yyyy-MM') as year_month,
+    dayofweek(date_day) as day_of_week,
+    dayofweek(date_day) in (1, 7) as is_weekend,
+    date_day = last_day(date_day) as is_month_end
 from spine

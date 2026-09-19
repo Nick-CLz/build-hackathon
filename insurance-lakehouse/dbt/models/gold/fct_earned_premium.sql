@@ -44,28 +44,40 @@
 
 with policies as (
     select
-        p.policy_id, p.product_code, p.partner_code, p.country, p.currency,
-        p.inception_date, p.expiry_date, p.policy_status,
-        p.written_premium_thb, p.term_days,
+        p.policy_id,
+        p.product_code,
+        p.partner_code,
+        p.country,
+        p.currency,
+        p.inception_date,
+        p.expiry_date,
+        p.policy_status,
+        p.written_premium_thb,
+        p.term_days,
         -- Exposure ends at the earliest of expiry, cancellation, and today.
         least(
             p.expiry_date,
             current_date(),
-            case when p.policy_status = 'CANCELLED'
-                 -- Cancellation date is not carried on the policy record, so
-                 -- fall back to the refund payment that records it.
-                 then coalesce(
-                     (select min(pay.effective_date)
-                      from {{ ref('silver_premium_payments') }} pay
-                      where pay.policy_id = p.policy_id and pay.is_refund),
-                     p.expiry_date)
-                 else p.expiry_date
+            case
+                when p.policy_status = 'CANCELLED'
+                    -- Cancellation date is not carried on the policy record, so
+                    -- fall back to the refund payment that records it.
+                    then coalesce(
+                        (
+                            select min(pay.effective_date)
+                            from {{ ref('silver_premium_payments') }} as pay
+                            where pay.policy_id = p.policy_id and pay.is_refund
+                        ),
+                        p.expiry_date
+                    )
+                else p.expiry_date
             end
         ) as exposure_end_date
-    from {{ ref('silver_policies') }} p
-    where p.inception_date is not null
-      and p.expiry_date is not null
-      and p.term_days > 0
+    from {{ ref('silver_policies') }} as p
+    where
+        p.inception_date is not null
+        and p.expiry_date is not null
+        and p.term_days > 0
 ),
 
 months as (
@@ -76,7 +88,7 @@ months as (
             date_trunc('month', pol.exposure_end_date),
             interval 1 month
         )) as month_start
-    from policies pol
+    from policies as pol
     where pol.exposure_end_date >= pol.inception_date
 ),
 
@@ -90,7 +102,7 @@ exposure as (
             add_months(cast(m.month_start as date), 1),
             m.exposure_end_date
         ) as period_end_excl
-    from months m
+    from months as m
 )
 
 select
@@ -99,21 +111,22 @@ select
     e.partner_code,
     e.country,
     e.currency,
-    cast(e.month_start as date)                     as month_start,
-    date_format(e.month_start, 'yyyy-MM')           as earned_year_month,
+    cast(e.month_start as date) as month_start,
+    date_format(e.month_start, 'yyyy-MM') as earned_year_month,
     e.inception_date,
     e.expiry_date,
     e.exposure_end_date,
     e.policy_status,
     e.written_premium_thb,
     e.term_days,
-    datediff(e.period_end_excl, e.period_start)     as days_on_risk,
+    datediff(e.period_end_excl, e.period_start) as days_on_risk,
     round(
         e.written_premium_thb
-        * datediff(e.period_end_excl, e.period_start) / e.term_days
-    , 2)                                            as earned_premium_thb,
+        * datediff(e.period_end_excl, e.period_start) / e.term_days,
+        2
+    ) as earned_premium_thb,
     -- Exposure in policy-years: the correct denominator for claim frequency.
     round(datediff(e.period_end_excl, e.period_start) / 365.25, 6)
-                                                    as exposure_policy_years
-from exposure e
+        as exposure_policy_years
+from exposure as e
 where e.period_end_excl > e.period_start

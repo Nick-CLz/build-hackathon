@@ -12,19 +12,60 @@
 -- Returns offending rows, so an empty result is a pass.
 
 with cases as (
-    select * from values
-        ('2026-01-05',    date '2026-01-05', 'iso, common era'),
-        ('2569-01-05',    date '2026-01-05', 'iso, buddhist era'),
-        ('05/01/2026',    date '2026-01-05', 'dd/mm/yyyy, common era'),
-        ('05/01/2569',    date '2026-01-05', 'dd/mm/yyyy, buddhist era'),
-        ('5 Jan 2026',    date '2026-01-05', 'english month abbreviation'),
-        ('5 ม.ค. 2569',   date '2026-01-05', 'thai month abbreviation, BE'),
-        ('  2569-01-05 ', date '2026-01-05', 'buddhist era with whitespace'),
-        ('garbage',       cast(null as date), 'unparseable yields null'),
-        ('',              cast(null as date), 'empty yields null'),
-        ('2026-13-45',    cast(null as date), 'impossible month/day yields null'),
-        (cast(null as string), cast(null as date), 'null input yields null')
-    as t(raw_date, expected, description)
+    select
+        '2026-01-05' as raw_date,
+        date '2026-01-05' as expected,
+        'iso, common era' as description
+    union all
+    select
+        '2569-01-05' as raw_date,
+        date '2026-01-05' as expected,
+        'iso, buddhist era' as description
+    union all
+    select
+        '05/01/2026' as raw_date,
+        date '2026-01-05' as expected,
+        'dd/mm/yyyy, common era' as description
+    union all
+    select
+        '05/01/2569' as raw_date,
+        date '2026-01-05' as expected,
+        'dd/mm/yyyy, buddhist era' as description
+    union all
+    select
+        '5 Jan 2026' as raw_date,
+        date '2026-01-05' as expected,
+        'english month abbreviation' as description
+    union all
+    select
+        '5 ม.ค. 2569' as raw_date,
+        date '2026-01-05' as expected,
+        'thai month abbreviation, BE' as description
+    union all
+    select
+        '  2569-01-05 ' as raw_date,
+        date '2026-01-05' as expected,
+        'buddhist era with whitespace' as description
+    union all
+    select
+        'garbage' as raw_date,
+        cast(null as date) as expected,
+        'unparseable yields null' as description
+    union all
+    select
+        '' as raw_date,
+        cast(null as date) as expected,
+        'empty yields null' as description
+    union all
+    select
+        '2026-13-45' as raw_date,
+        cast(null as date) as expected,
+        'impossible month/day yields null' as description
+    union all
+    select
+        cast(null as string) as raw_date,
+        cast(null as date) as expected,
+        'null input yields null' as description
 )
 
 select

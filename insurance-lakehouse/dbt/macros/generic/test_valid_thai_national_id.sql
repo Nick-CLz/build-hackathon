@@ -29,7 +29,7 @@ checked as (
         digits,
         (
             11 - (
-                {%- for i in range(12) %}
+{%- for i in range(12) %}
                 cast(substr(digits, {{ i + 1 }}, 1) as int) * {{ 13 - i }}
                 {%- if not loop.last %} + {% endif %}
                 {%- endfor %}

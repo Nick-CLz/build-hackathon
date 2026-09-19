@@ -36,26 +36,32 @@ select
     loss_year_month,
     country,
     product_code,
-    count(*)                                            as claim_count,
-    round(avg(reporting_lag_days), 1)                   as avg_lag_days,
-    min(reporting_lag_days)                             as min_lag_days,
-    max(reporting_lag_days)                             as max_lag_days,
-    percentile_approx(reporting_lag_days, 0.50)         as p50_lag_days,
-    percentile_approx(reporting_lag_days, 0.90)         as p90_lag_days,
-    percentile_approx(reporting_lag_days, 0.95)         as p95_lag_days,
-    percentile_approx(reporting_lag_days, 0.99)         as p99_lag_days,
-    sum(case when is_late_reported then 1 else 0 end)   as late_reported_count,
+    count(*) as claim_count,
+    round(avg(reporting_lag_days), 1) as avg_lag_days,
+    min(reporting_lag_days) as min_lag_days,
+    max(reporting_lag_days) as max_lag_days,
+    percentile_approx(reporting_lag_days, 0.50) as p50_lag_days,
+    percentile_approx(reporting_lag_days, 0.90) as p90_lag_days,
+    percentile_approx(reporting_lag_days, 0.95) as p95_lag_days,
+    percentile_approx(reporting_lag_days, 0.99) as p99_lag_days,
+    sum(case when is_late_reported then 1 else 0 end) as late_reported_count,
     round(sum(case when is_late_reported then 1 else 0 end) / count(*), 4)
-                                                        as late_reported_pct,
+        as late_reported_pct,
     -- Claims that would fall outside the configured lookback window, i.e. the
     -- ones a re-run would NOT pick up. This should be close to zero.
-    sum(case when reporting_lag_days > {{ var('claims_lookback_days') }}
-             then 1 else 0 end)                         as beyond_lookback_window,
+    sum(case
+        when reporting_lag_days > {{ var('claims_lookback_days') }}
+            then 1
+        else 0
+    end) as beyond_lookback_window,
     sum(case when is_late_reported then gross_incurred_thb else 0 end)
-                                                        as late_reported_incurred_thb,
+        as late_reported_incurred_thb,
     -- A loss month is still developing if the newest claim for it arrived
     -- recently relative to the lookback window.
-    max(loss_date) + max(reporting_lag_days) > date_sub(current_date(),
-        {{ var('claims_lookback_days') }})              as claims_still_developing
+    max(
+        loss_date) + max(reporting_lag_days) > date_sub(
+        current_date(),
+        {{ var('claims_lookback_days') }}
+    ) as claims_still_developing
 from lagged
 group by 1, 2, 3

@@ -19,12 +19,12 @@
     exists to explain, and the raw exception would pre-empt the message below.
 #}
 {% macro assert_bronze_is_reachable() %}
-    {% if execute and target.type == 'spark' %}
-        {% set bronze = var('bronze_schema', 'bronze') %}
-        {% set databases = run_query('show databases') %}
-        {% set names = databases.columns[0].values() | map('lower') | list %}
+{% if execute and target.type == 'spark' %}
+{% set bronze = var('bronze_schema', 'bronze') %}
+{% set databases = run_query('show databases') %}
+{% set names = databases.columns[0].values() | map('lower') | list %}
 
-        {% if bronze | lower not in names %}
+{% if bronze | lower not in names %}
             {{ exceptions.raise_compiler_error(
                 "dbt cannot see the '" ~ bronze ~ "' schema, so no model can build.\n"
                 ~ "Spark reports these schemas instead: " ~ (names | join(', ')) ~ "\n\n"
@@ -36,6 +36,6 @@
                 ~ "  3. Bronze has genuinely not been built yet.\n\n"
                 ~ "Use the Makefile, which handles 1 and 2:\n"
                 ~ "    make dbt-build       (or make data && make bronze first)") }}
-        {% endif %}
-    {% endif %}
+{% endif %}
+{% endif %}
 {% endmacro %}

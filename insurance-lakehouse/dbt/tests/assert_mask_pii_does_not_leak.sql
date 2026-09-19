@@ -13,11 +13,11 @@
 
 with raw as (
     select
-        '1101700151361'            as national_id,
-        '081-234-5678'             as phone,
-        '1กข 1234'                 as plate,
+        '1101700151361' as national_id,
+        '081-234-5678' as phone,
+        '1กข 1234' as plate,
         'somchai.5@example.invalid' as email,
-        'hypertension'             as condition
+        'hypertension' as condition
 ),
 
 masked as (
@@ -29,28 +29,35 @@ masked as (
         condition,
         {{ mask_pii('national_id', 'national_id') }} as m_nid,
         {{ mask_pii('national_id', 'national_id') }} as m_nid_again,
-        {{ mask_pii('phone', 'phone') }}             as m_phone,
-        {{ mask_pii('plate', 'plate') }}             as m_plate,
-        {{ mask_pii('email', 'email') }}             as m_email,
-        {{ mask_pii('condition', 'health') }}        as m_condition,
+        {{ mask_pii('phone', 'phone') }} as m_phone,
+        {{ mask_pii('plate', 'plate') }} as m_plate,
+        {{ mask_pii('email', 'email') }} as m_email,
+        {{ mask_pii('condition', 'health') }} as m_condition,
         {{ mask_pii('cast(null as string)', 'phone') }} as m_null
     from raw
 ),
 
 violations as (
-    select 'national_id is unmasked' as failure from masked where m_nid = national_id
+    select 'national_id is unmasked' as failure from masked
+    where m_nid = national_id
     union all
-    select 'national_id hash is not deterministic' from masked where m_nid <> m_nid_again
+    select 'national_id hash is not deterministic' from masked
+    where m_nid <> m_nid_again
     union all
-    select 'phone leaks the full number' from masked where m_phone like '%' || phone || '%'
+    select 'phone leaks the full number' from masked
+    where m_phone like '%' || phone || '%'
     union all
-    select 'plate leaks the full plate' from masked where m_plate like '%' || plate || '%'
+    select 'plate leaks the full plate' from masked
+    where m_plate like '%' || plate || '%'
     union all
-    select 'email leaks the local part' from masked where m_email like '%somchai%'
+    select 'email leaks the local part' from masked
+    where m_email like '%somchai%'
     union all
-    select 'health data is not fully redacted' from masked where m_condition is not null
+    select 'health data is not fully redacted' from masked
+    where m_condition is not null
     union all
-    select 'masking manufactured a value from null' from masked where m_null is not null
+    select 'masking manufactured a value from null' from masked
+    where m_null is not null
 )
 
 select * from violations

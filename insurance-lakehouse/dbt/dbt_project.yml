@@ -22,8 +22,16 @@ vars:
   reporting_currency: THB
   # How far back the incremental claims model re-reads on each run, so that
   # late-reported claims update the periods they actually belong to.
-  # See docs/decisions.md ADR-0011.
-  claims_lookback_days: 30
+  #
+  # 60, not 30, and the number is MEASURED rather than guessed. At 30,
+  # mart_claims_lag reported p99 reporting lag = 60 days with 25 claims
+  # falling beyond the window -- 25 claims whose loss months would stay
+  # permanently understated, because a re-run would never re-read them.
+  # Surfacing that is precisely what the mart is for, and raising the var is
+  # the response. Re-check it as the book changes. The cost is re-reading 60
+  # days of claims per run, which stays cheap because claims are
+  # low-cardinality relative to policies.
+  claims_lookback_days: 60
   # Salt for hashing national IDs. Overridden from the PII_SALT env var; the
   # default exists only so `dbt parse` works without a configured environment.
   pii_salt: "{{ env_var('PII_SALT', 'local-dev-salt-not-for-real-data') }}"
@@ -32,7 +40,14 @@ vars:
 models:
   insurance_lakehouse:
     +file_format: delta
-    +persist_docs: {relation: true, columns: true}
+    # Off for the local target. Persisting docs makes Spark reconcile the
+    # Delta schema into the Derby-backed Hive metastore via ALTER TABLE, which
+    # fails with "types incompatible with the existing columns" whenever a
+    # model's columns change between runs -- printing a Java stack trace in
+    # the middle of an otherwise clean build without failing anything.
+    # Unity Catalog handles this properly, so the databricks target turns it
+    # back on.
+    +persist_docs: {relation: false, columns: false}
     silver:
       +schema: silver
       staging:

@@ -21,15 +21,17 @@ with per_policy as (
     select
         policy_id,
         max(written_premium_thb) as written_premium_thb,
-        sum(earned_premium_thb)  as earned_premium_thb
+        sum(earned_premium_thb) as earned_premium_thb
     from {{ ref('fct_earned_premium') }}
     group by policy_id
 )
+
 select
     policy_id,
     written_premium_thb,
     earned_premium_thb,
     earned_premium_thb - written_premium_thb as excess_thb
 from per_policy
-where earned_premium_thb >
-      written_premium_thb + greatest(1.0, abs(written_premium_thb) * 0.001)
+where
+    earned_premium_thb
+    > written_premium_thb + greatest(1.0, abs(written_premium_thb) * 0.001)

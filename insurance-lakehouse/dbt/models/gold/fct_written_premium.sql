@@ -16,7 +16,7 @@ select
     p.inception_date,
     p.expiry_date,
     cast(date_format(p.inception_date, 'yyyyMMdd') as int) as inception_date_key,
-    date_format(p.inception_date, 'yyyy-MM')               as written_year_month,
+    date_format(p.inception_date, 'yyyy-MM') as written_year_month,
     p.policy_status,
     p.term_days,
     p.written_premium,
@@ -24,5 +24,5 @@ select
     p.sum_insured,
     p.sum_insured_thb,
     p.record_source
-from {{ ref('silver_policies') }} p
+from {{ ref('silver_policies') }} as p
 where p.inception_date is not null
