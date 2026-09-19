@@ -105,7 +105,14 @@ def copy_into(cur, registry, source, catalog: str, batch_id: str) -> None:
     table = f"{catalog}.bronze.{source.name}"
     pattern = f"{volume_root(catalog)}/{source.path}"
     fmt = "CSV" if source.format == "csv" else "JSON"
-    opts = {"header": "true", "inferSchema": "false"} if source.format == "csv" else {}
+    # rescuedDataColumn captures content that did not parse into the declared
+    # schema. Without it a malformed JSON line lands as a row of nulls that is
+    # indistinguishable from a sparse-but-valid record.
+    opts = (
+        {"header": "true", "inferSchema": "false"}
+        if source.format == "csv"
+        else {"rescuedDataColumn": "_rescued_data"}
+    )
     opt_sql = ", ".join(f"'{k}' = '{v}'" for k, v in opts.items())
 
     # Empty shell first: COPY INTO requires the target to exist. mergeSchema on
@@ -136,6 +143,54 @@ def copy_into(cur, registry, source, catalog: str, batch_id: str) -> None:
     """,
         f"COPY INTO {source.name}",
     )
+
+
+def quarantine(cur, source, catalog: str) -> None:
+    """Move unlandable records out of the bronze table, as local bronze does.
+
+    COPY INTO has no notion of quarantine: it loads every row it can parse and
+    leaves the rest to the rescued-data column. Without this step the Databricks
+    tables carry records the local ones deliberately hold back, and the two
+    targets stop meaning the same thing -- which the parity check caught as an
+    exact +4 on precisely the four tables that have a quarantine table locally.
+
+    The rule is ADR-0007's, unchanged: quarantine only what cannot be landed at
+    all -- a record with no primary key to merge on, or one that did not parse.
+    Business-rule violations (negative premium, orphan FK) still land, because
+    they are the signal the dbt tests exist to measure.
+    """
+    table = f"{catalog}.bronze.{source.name}"
+    qtable = f"{catalog}.bronze.{source.name}_quarantine"
+
+    conditions = []
+    if source.primary_key:
+        pk = " OR ".join(
+            f"`{c}` IS NULL OR trim(cast(`{c}` AS STRING)) = ''" for c in source.primary_key
+        )
+        conditions.append((f"({pk})", "missing_primary_key"))
+
+    cur.execute(f"DESCRIBE TABLE {table}")
+    columns = {r[0] for r in cur.fetchall() if r[0] and not r[0].startswith("#")}
+    if "_rescued_data" in columns:
+        conditions.append(("_rescued_data IS NOT NULL", "unparseable_record"))
+
+    if not conditions:
+        return
+
+    predicate = " OR ".join(c for c, _ in conditions)
+    reason = (
+        "CASE " + " ".join(f"WHEN {cond} THEN '{label}'" for cond, label in conditions) + " END"
+    )
+
+    cur.execute(
+        f"CREATE TABLE IF NOT EXISTS {qtable} AS "
+        f"SELECT *, CAST(NULL AS STRING) AS _quarantine_reason FROM {table} WHERE 1 = 0"
+    )
+    cur.execute(
+        f"INSERT INTO {qtable} BY NAME "
+        f"SELECT *, {reason} AS _quarantine_reason FROM {table} WHERE {predicate}"
+    )
+    cur.execute(f"DELETE FROM {table} WHERE {predicate}")
 
 
 def main() -> int:
@@ -181,6 +236,7 @@ def main() -> int:
         print("loading bronze tables")
         for source in registry.sources:
             copy_into(cur, registry, source, args.catalog, batch_id)
+            quarantine(cur, source, args.catalog)
 
     print(f"\nbronze loaded into {args.catalog}.bronze (batch {batch_id})")
     print("next:  make dbt-build TARGET=databricks")
