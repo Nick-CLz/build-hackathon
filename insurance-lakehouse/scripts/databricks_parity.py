@@ -58,6 +58,54 @@ def remote_counts(cur, catalog: str, names: list[str]) -> dict[str, int | None]:
     return out
 
 
+def compare_schemas(cur, catalog: str, registry) -> int:
+    """Check every bronze table carries the metadata columns the contract promises.
+
+    Row counts agreeing proves the same NUMBER of records arrived; it says
+    nothing about their shape. A missing _record_hash produced identical counts
+    and twelve broken staging models, so schema is checked explicitly.
+    """
+    from ingestion.config import METADATA_COLUMNS
+    from ingestion.session import get_spark
+
+    spark = get_spark("parity-schema")
+    problems = 0
+    print(f"\n{'table':<34}  metadata columns")
+    print("-" * 74)
+    for source in registry.sources:
+        name = f"{registry.bronze_schema}.{source.name}"
+        try:
+            cur.execute(f"DESCRIBE TABLE {catalog}.{name}")
+            remote_cols = {r[0] for r in cur.fetchall() if r[0] and not r[0].startswith("#")}
+        except Exception:
+            print(f"{name:<34}  absent on Databricks")
+            problems += 1
+            continue
+        try:
+            local_cols = set(spark.table(name).columns)
+        except Exception:
+            local_cols = set()
+
+        missing_meta = [c for c in METADATA_COLUMNS if c not in remote_cols]
+        missing_business = sorted(
+            c for c in local_cols if not c.startswith("_") and c not in remote_cols
+        )
+        if missing_meta or missing_business:
+            problems += 1
+            detail = []
+            if missing_meta:
+                detail.append("missing metadata: " + ", ".join(missing_meta))
+            if missing_business:
+                detail.append("missing business: " + ", ".join(missing_business[:4]))
+            print(f"{name:<34}  {'; '.join(detail)}")
+        else:
+            extra = sorted(c for c in remote_cols - local_cols if c.startswith("_"))
+            note = f"ok (platform extras: {', '.join(extra)})" if extra else "ok"
+            print(f"{name:<34}  {note}")
+    print("-" * 74)
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--catalog", default=os.getenv("DATABRICKS_CATALOG", "insurance_dev"))
@@ -79,8 +127,10 @@ def main() -> int:
     local = local_counts(names)
 
     print("reading Databricks counts ...")
+    schema_problems = 0
     with connect() as conn, conn.cursor() as cur:
         remote = remote_counts(cur, args.catalog, names)
+        schema_problems = compare_schemas(cur, args.catalog, registry)
 
     print(f"\n{'table':<34}{'local':>10}{'databricks':>13}   verdict")
     print("-" * 74)
@@ -107,7 +157,9 @@ def main() -> int:
         print("  * COPY INTO skipped files it had already loaded (re-run is a no-op)")
         print("  * the local run used a different LAKEHOUSE_N_POLICIES")
         print("  * quarantined rows differ because bronze parsed the file differently")
-    return 0 if diverged == 0 else 1
+    if schema_problems:
+        print(f"{schema_problems} table(s) with a schema mismatch -- see above.")
+    return 0 if (diverged == 0 and schema_problems == 0) else 1
 
 
 if __name__ == "__main__":

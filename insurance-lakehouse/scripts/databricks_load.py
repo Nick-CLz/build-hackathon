@@ -145,6 +145,40 @@ def copy_into(cur, registry, source, catalog: str, batch_id: str) -> None:
     )
 
 
+def add_record_hash(cur, source, catalog: str) -> None:
+    """Add _record_hash, the one metadata column COPY INTO cannot supply inline.
+
+    The local engine hashes the BUSINESS columns only, so a record a partner
+    resends verbatim hashes identically and silver can collapse it. That
+    definition needs the column list, which is only known after COPY INTO has
+    inferred the schema -- hence a second pass rather than an expression in the
+    SELECT.
+
+    Omitting it broke twelve staging models on Databricks with
+    UNRESOLVED_COLUMN, because dedupe_latest() uses it as the final tie-break.
+    Row-count parity did not catch that: the counts were identical and the
+    schemas were not.
+    """
+    table = f"{catalog}.bronze.{source.name}"
+
+    cur.execute(f"DESCRIBE TABLE {table}")
+    columns = [r[0] for r in cur.fetchall() if r[0] and not r[0].startswith("#")]
+    if "_record_hash" not in columns:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN _record_hash STRING")
+
+    business = [c for c in columns if not c.startswith("_")]
+    if not business:
+        return
+
+    # Mirrors ingestion/bronze.py::add_metadata exactly: '||' separator and a
+    # '<null>' sentinel, so a null and an empty string do not collide.
+    parts = ", ".join(f"coalesce(cast(`{c}` AS STRING), '<null>')" for c in business)
+    cur.execute(
+        f"UPDATE {table} SET _record_hash = sha2(concat_ws('||', {parts}), 256) "
+        "WHERE _record_hash IS NULL"
+    )
+
+
 def quarantine(cur, source, catalog: str) -> None:
     """Move unlandable records out of the bronze table, as local bronze does.
 
@@ -259,6 +293,9 @@ def main() -> int:
         print("loading bronze tables")
         for source in registry.sources:
             copy_into(cur, registry, source, args.catalog, batch_id)
+            # Hash before quarantining, so held-back records carry it too --
+            # the same order as the local engine.
+            add_record_hash(cur, source, args.catalog)
             quarantine(cur, source, args.catalog)
 
     print(f"\nbronze loaded into {args.catalog}.bronze (batch {batch_id})")
