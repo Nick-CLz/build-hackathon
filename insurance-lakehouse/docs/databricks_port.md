@@ -142,3 +142,63 @@ Three consequences for this design:
 **Rollout order, revised by this finding:** load bronze, validate against local
 row counts using time travel, *then* apply `unity_catalog.sql`. Applying
 governance first makes the validation step unavailable.
+
+---
+
+## The port, executed
+
+Not a plan. Run against the Free Edition workspace, in this order:
+
+```
+make databricks-probe    # 18/19 capabilities supported
+make databricks-load     # 17 sources -> UC Volume -> COPY INTO -> bronze
+make databricks-parity   # counts AND schemas, both sides
+make databricks-build    # the same dbt project, --target databricks
+```
+
+**Result: identical to local.**
+
+| | Local (Spark 3.5.9 + Delta 3.3.3) | Databricks (serverless, DBSQL 2026.36) |
+|---|---|---|
+| `dbt build` | PASS 112, WARN 2, ERROR 0 of 114 | PASS 112, WARN 2, ERROR 0 of 114 |
+| Warnings | `valid_thai_national_id`, `mart_loss_ratio` credible-cell range | the same two |
+| Tables compared | — | 23 of 23 matching, 0 diverged |
+| Quarantine | 4 tables, 16 rows | 4 tables, 16 rows, same reasons |
+
+Loss ratio and claim frequency agree to four decimal places on every product:
+
+```
+product          local LR    dbx LR  local freq  dbx freq
+HEALTH_ADJ         0.7251    0.7251      0.1179    0.1179
+MOTOR_CMI          0.9294    0.9294      0.1048    0.1048
+MOTOR_VOL_C1       0.5818    0.5818      0.0877    0.0877
+MOTOR_VOL_C2       0.3968    0.3968      0.0443    0.0443
+MOTOR_VOL_C3       0.6201    0.6201      0.0974    0.0974
+```
+
+**No model, macro or test was changed for Databricks.** The only
+platform-specific code is the loader, because serverless has no cluster to
+submit PySpark to.
+
+### Five contract breaks the port exposed
+
+Each was invisible until the previous one was fixed, and none was visible from
+reading the code:
+
+| # | Symptom | Cause |
+|---|---|---|
+| 1 | Four bronze tables carried exactly 4 rows too many | `COPY INTO` has no quarantine step; ADR-0007's rule was not applied |
+| 2 | Quarantine *reason* disagreed between targets | Databricks' JSON reader emits an all-null row rather than rescuing a malformed line |
+| 3 | 13 empty quarantine tables | created per source regardless of need, implying a problem where there was none |
+| 4 | 12 staging models failed with `UNRESOLVED_COLUMN` | `_record_hash` was never supplied; **row-count parity passed while it was missing** |
+| 5 | Three drift columns silently absent | `COPY_OPTIONS` mergeSchema evolves the *target*; `FORMAT_OPTIONS` mergeSchema is what makes the *reader* look at every file |
+
+Number 4 is the one worth remembering. A parity check that compares only row
+counts proves the same *number* of records arrived and says nothing about their
+shape — it reported 17/17 while a required column was missing everywhere. The
+check now compares schemas too, and found defect 5 on its first run.
+
+Number 5 is ADR-0008 on a different engine: Spark's CSV reader samples files
+and drops a drifted header; Databricks does the same thing through a different
+mechanism. Both fail the same way — the feed keeps loading, the new column
+never appears, and nobody notices until someone asks why it is empty.
