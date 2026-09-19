@@ -298,3 +298,8 @@ databricks-load: ## Bootstrap the catalog and COPY INTO bronze (use DRY=1 to pre
 .PHONY: databricks-build
 databricks-build: ## Run the same dbt project against Databricks
 	$(DBT) build $(DBT_DIRS) --target databricks
+
+.PHONY: databricks-parity
+databricks-parity: ## Compare local vs Databricks row counts (run BEFORE governance)
+	$(PY) scripts/databricks_parity.py --catalog $(or $(CATALOG),insurance_dev) \
+	  $(if $(BRONZE),--bronze-only,)
