@@ -1,0 +1,48 @@
+---
+name: insurance_lakehouse
+version: 1.0.0
+config-version: 2
+profile: insurance_lakehouse
+
+model-paths: [models]
+macro-paths: [macros]
+test-paths: [tests]
+snapshot-paths: [snapshots]
+seed-paths: [seeds]
+target-path: target
+clean-targets: [target, dbt_packages, logs]
+
+vars:
+  # Reporting currency for every cross-country aggregate.
+  reporting_currency: THB
+  # How far back the incremental claims model re-reads on each run, so that
+  # late-reported claims update the periods they actually belong to.
+  # See docs/decisions.md ADR-0011.
+  claims_lookback_days: 30
+  # Salt for hashing national IDs. Overridden from the PII_SALT env var; the
+  # default exists only so `dbt parse` works without a configured environment.
+  pii_salt: "{{ env_var('PII_SALT', 'local-dev-salt-not-for-real-data') }}"
+
+models:
+  insurance_lakehouse:
+    +file_format: delta
+    +persist_docs: {relation: true, columns: true}
+    silver:
+      +schema: silver
+      staging:
+        +materialized: view
+    gold:
+      +schema: gold
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+snapshots:
+  insurance_lakehouse:
+    +target_schema: silver
+    +file_format: delta
+
+seeds:
+  insurance_lakehouse:
+    +schema: seeds

@@ -1,0 +1,10 @@
+---
+# dbt_utils is referenced by git rather than via hub.getdbt.com.
+#
+# `dbt deps` against the hub resolves to a tarball on codeload.github.com, which
+# restricted corporate networks and sandboxed CI frequently block -- the failure
+# surfaces as an opaque "not a gzip file" because dbt tries to gunzip an error
+# page. A git reference works in both environments and pins just as precisely.
+packages:
+  - git: https://github.com/dbt-labs/dbt-utils.git
+    revision: 1.4.1

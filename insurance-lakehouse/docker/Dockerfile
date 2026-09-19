@@ -26,13 +26,24 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && "$JAVA_HOME/bin/java" -version
 
-# Trust the extra CA, if one was supplied, for both system tools and Python.
+# Trust the extra CA, if one was supplied. This has to be done in two places:
+# the system store (for apt, curl and Python) and the JDK's own truststore (for
+# Spark resolving Delta JARs from Maven Central). Java does not read the system
+# CA bundle, so skipping the keytool step leaves JAR resolution failing with an
+# opaque SSL error long after pip has started working.
 COPY docker/ca/ /tmp/extra-ca/
 RUN if [ -n "$EXTRA_CA_BUNDLE" ] && [ -f "/tmp/extra-ca/$EXTRA_CA_BUNDLE" ]; then \
       cp "/tmp/extra-ca/$EXTRA_CA_BUNDLE" /usr/local/share/ca-certificates/extra.crt \
       && update-ca-certificates \
-      && echo "trusted extra CA: $EXTRA_CA_BUNDLE"; \
-    fi; rm -rf /tmp/extra-ca
+      && csplit -z -f /tmp/cacert- -b '%02d.pem' \
+           /usr/local/share/ca-certificates/extra.crt '/BEGIN CERTIFICATE/' '{*}' >/dev/null \
+      && for c in /tmp/cacert-*.pem; do \
+           "$JAVA_HOME/bin/keytool" -importcert -noprompt -trustcacerts \
+             -alias "extra-$(basename "$c" .pem)" -file "$c" \
+             -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit >/dev/null || true; \
+         done \
+      && echo "trusted extra CA in system + JDK stores: $EXTRA_CA_BUNDLE"; \
+    fi; rm -rf /tmp/extra-ca /tmp/cacert-*.pem
 ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt

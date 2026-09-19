@@ -15,3 +15,6 @@ spark-warehouse/
 reports/
 airflow/.astro/
 airflow/dbt/
+dbt/package-lock.yml
+docker/ca/*
+!docker/ca/.gitignore

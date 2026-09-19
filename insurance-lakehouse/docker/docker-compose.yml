@@ -13,8 +13,10 @@ services:
     container_name: insurance-lakehouse
     working_dir: /workspace
     environment:
+      # JAVA_HOME is deliberately NOT set here. The image already points it at
+      # its own JDK; overriding it from compose silently breaks Spark with
+      # "Java gateway process exited" if the two ever disagree.
       SPARK_CONF_DIR: /workspace/conf
-      JAVA_HOME: /opt/java/openjdk
       LAKEHOUSE_SEED: "${LAKEHOUSE_SEED:-42}"
       LAKEHOUSE_N_POLICIES: "${LAKEHOUSE_N_POLICIES:-20000}"
       PII_SALT: "${PII_SALT:-change-me-local-only}"
