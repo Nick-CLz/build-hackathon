@@ -40,14 +40,14 @@ vars:
 models:
   insurance_lakehouse:
     +file_format: delta
-    # Off for the local target. Persisting docs makes Spark reconcile the
-    # Delta schema into the Derby-backed Hive metastore via ALTER TABLE, which
-    # fails with "types incompatible with the existing columns" whenever a
-    # model's columns change between runs -- printing a Java stack trace in
-    # the middle of an otherwise clean build without failing anything.
-    # Unity Catalog handles this properly, so the databricks target turns it
-    # back on.
-    +persist_docs: {relation: false, columns: false}
+    # Target-conditional. Unity Catalog stores column comments properly, so the
+    # databricks target persists docs. The local target does not: Spark
+    # reconciles the Delta schema into the Derby-backed Hive metastore via
+    # ALTER TABLE, which fails with "types incompatible with the existing
+    # columns" whenever a model's columns change between runs -- printing a
+    # Java stack trace in the middle of an otherwise clean build while failing
+    # nothing.
+    +persist_docs: "{{ {'relation': target.type == 'databricks', 'columns': target.type == 'databricks'} }}"
     silver:
       +schema: silver
       staging:
@@ -58,6 +58,7 @@ models:
     marts:
       +schema: marts
       +materialized: table
+
 
 snapshots:
   insurance_lakehouse:

@@ -284,3 +284,17 @@ ci: ## Run every CI step locally, in the same order as the workflow
 .PHONY: governance
 governance: ## Generate governance/unity_catalog.sql from PII metadata
 	$(PY) governance/generate_unity_catalog.py --catalog $(or $(CATALOG),insurance_dev)
+
+# ---------------------------------------------------------------- databricks
+.PHONY: databricks-probe
+databricks-probe: ## Probe what the Databricks workspace actually permits
+	$(PY) scripts/databricks_probe.py --catalog $(or $(CATALOG),insurance_dev)
+
+.PHONY: databricks-load
+databricks-load: ## Bootstrap the catalog and COPY INTO bronze (use DRY=1 to preview)
+	$(PY) scripts/databricks_load.py --catalog $(or $(CATALOG),insurance_dev) \
+	  $(if $(DRY),--dry-run,)
+
+.PHONY: databricks-build
+databricks-build: ## Run the same dbt project against Databricks
+	$(DBT) build $(DBT_DIRS) --target databricks
