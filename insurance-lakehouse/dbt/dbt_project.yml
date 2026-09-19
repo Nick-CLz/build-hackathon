@@ -12,6 +12,11 @@ seed-paths: [seeds]
 target-path: target
 clean-targets: [target, dbt_packages, logs]
 
+# Fails with an explanation rather than an opaque UnresolvedRelation when dbt
+# is run from the wrong directory. See macros/assert_bronze_is_reachable.sql.
+on-run-start:
+  - "{{ assert_bronze_is_reachable() }}"
+
 vars:
   # Reporting currency for every cross-country aggregate.
   reporting_currency: THB
@@ -22,6 +27,7 @@ vars:
   # Salt for hashing national IDs. Overridden from the PII_SALT env var; the
   # default exists only so `dbt parse` works without a configured environment.
   pii_salt: "{{ env_var('PII_SALT', 'local-dev-salt-not-for-real-data') }}"
+  bronze_schema: bronze
 
 models:
   insurance_lakehouse:

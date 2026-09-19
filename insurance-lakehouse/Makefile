@@ -135,3 +135,44 @@ down: ## Stop and remove the container
 .PHONY: shell
 shell: ## Open a shell inside the container
 	$(COMPOSE) run --rm lakehouse bash
+
+# ---------------------------------------------------------------- dbt
+# dbt is ALWAYS invoked from the project root. conf/spark-defaults.conf uses
+# relative paths (it cannot expand env vars), so running dbt from inside dbt/
+# would point Spark at a second, empty metastore.
+DBT := $(VENV)/bin/dbt --no-use-colors
+DBT_DIRS := --project-dir dbt --profiles-dir dbt
+export DBT_TARGET ?= local
+
+.PHONY: dbt-deps
+dbt-deps: ## Install dbt packages
+	$(DBT) deps $(DBT_DIRS)
+
+.PHONY: dbt-build
+dbt-build: ## Run models, tests, snapshots and seeds (dbt build)
+	$(DBT) build $(DBT_DIRS) --target $(DBT_TARGET)
+
+.PHONY: dbt-run
+dbt-run: ## Run models only
+	$(DBT) run $(DBT_DIRS) --target $(DBT_TARGET)
+
+.PHONY: dbt-test
+dbt-test: ## Run dbt tests only
+	$(DBT) test $(DBT_DIRS) --target $(DBT_TARGET)
+
+.PHONY: snapshot
+snapshot: ## Run dbt snapshots (SCD2 policy history)
+	$(DBT) snapshot $(DBT_DIRS) --target $(DBT_TARGET)
+
+.PHONY: freshness
+freshness: ## Check source freshness against the SLAs in config/sources.yml
+	$(DBT) source freshness $(DBT_DIRS) --target $(DBT_TARGET)
+
+.PHONY: dbt-docs
+dbt-docs: ## Generate and serve dbt docs
+	$(DBT) docs generate $(DBT_DIRS) --target $(DBT_TARGET)
+	$(DBT) docs serve $(DBT_DIRS) --port 8081
+
+.PHONY: dbt-test-singular
+dbt-test-singular: ## Run only the singular (hand-written) dbt tests
+	$(DBT) test $(DBT_DIRS) --target $(DBT_TARGET) -s "test_type:singular"
