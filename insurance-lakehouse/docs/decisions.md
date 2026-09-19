@@ -249,3 +249,110 @@ auto-compaction defaults, default-on deletion vectors, Unity Catalog governance.
 **Why this matters beyond accuracy.** "Which Delta features are OSS?" is exactly
 the kind of question a Lead candidate gets asked, and the honest answer is more
 nuanced than either marketing or folklore suggests.
+
+---
+
+## ADR-0010 — Astro Runtime is pinned by Python, not by Airflow
+
+**Status:** accepted
+
+**Context.** `astro dev init` scaffolds against the newest Runtime, which at the
+time of writing is 3.3-7. That image ships **Python 3.14**. PySpark 3.5.9 does
+not support it, so any Spark task in that image fails at import.
+
+**Decision.** Pin `quay.io/astronomer/astro-runtime:13.11.0`, which ships Python
+3.12. PySpark 3.5.9 and delta-spark 3.3.3 were installed on Python 3.12 here and
+verified to create a SparkSession and write a Delta table.
+
+**The general rule.** When a pipeline image carries Spark, the Runtime version
+is chosen by the Python version Spark supports, not by the Airflow version you
+want. Taking the newest Runtime is how you end up debugging an import error at
+2am.
+
+**Known limitation in this environment.** `astro dev start` cannot build here:
+the base image's ONBUILD hook installs dependencies from `pip.astronomer.io`
+before any instruction in our Dockerfile runs, so the agent proxy's self-signed
+CA cannot be trusted in time and the fetch fails with `UnknownIssuer`. That is
+an artefact of this sandbox's TLS interception, not of the project. The DAG is
+therefore verified by executing it directly (`make airflow-test`), which runs
+every task for real against local Spark and Delta.
+
+---
+
+## ADR-0011 — Orchestration: BashOperator now, Cosmos when the manifest exists
+
+**Status:** accepted
+
+**Context.** The brief prefers Astronomer Cosmos so that dbt models render as
+individual Airflow tasks.
+
+**Decision.** The DAG ships with a single `dbt build` BashOperator, with Cosmos
+installed and the manifest-based task group documented alongside it.
+
+**Why.** Cosmos's default `LoadMode.DBT_LS` shells out to `dbt ls` **on every
+scheduler parse**, which needs a live warehouse connection just to render the
+DAG and adds seconds to each heartbeat. The production-correct mode is
+`LoadMode.DBT_MANIFEST`, reading a pre-built `manifest.json` (`make
+dbt-manifest`). That is a build-pipeline dependency: the manifest must be
+generated and shipped with the DAG, which is a CI concern rather than a DAG
+concern.
+
+**Trade-off accepted.** One coarse task instead of per-model tasks, so a failure
+says "dbt build failed" rather than naming the model. `dbt build` still fails
+fast and its logs name the model, and the observability report attributes
+failures per node — so the information is not lost, only one click further away.
+
+---
+
+## ADR-0012 — Observability: run-results parser, not Elementary
+
+**Status:** accepted
+
+**Context.** The brief asks for Elementary if it works with dbt-spark, and a
+documented fallback if not.
+
+**Finding.** `elementary-data` does publish a `spark` extra, so Elementary is not
+categorically incompatible. The blocker is the *connection method*: this project
+uses `method: session`, an in-process SparkSession with no Thrift endpoint. The
+`edr` CLI runs as a separate process and connects through the dbt profile, and
+two processes cannot share one local SparkSession. There is nothing for `edr` to
+attach to.
+
+**Decision.** Parse the artifacts dbt already writes (`run_results.json`,
+`manifest.json`, `sources.json`), append them to a Delta `observability` schema
+so history accumulates across runs, and render a static HTML summary.
+`make report` produces `reports/observability.html`.
+
+**What is lost:** anomaly detection on metrics over time, and the hosted UI.
+**What is kept:** test outcomes with severity, model timings, row counts,
+freshness state, and run-over-run history — which is what answers "is the
+warehouse healthy" at 9am.
+
+**On Databricks the recommendation flips.** dbt-databricks connects over SQL
+warehouses, `edr` works normally, and Elementary is worth adopting there.
+
+---
+
+## ADR-0013 — A DAG that hides a failed task is worse than no DAG
+
+**Status:** accepted
+
+**Context.** The first version of the DAG hung the `end` task off
+`observability_report`, which uses `trigger_rule="all_done"` so that the report
+is produced even when the build fails.
+
+**The bug this created.** `dbt_build` failed three times and the DAG run was
+still marked **SUCCESS**, because `end`'s only upstream had succeeded. A
+pipeline that reports green with a broken warehouse inside it is worse than no
+orchestration: people stop looking at a dashboard that is always green.
+
+**Fix.** `end` now depends on both `dbt_build` and `observability_report` with
+the default `all_success` rule. A failed build propagates to `end` as
+`upstream_failed` and the run fails, while the report still runs via `all_done`
+and captures why.
+
+**Verified, not assumed.** The DAG was re-run with `DBT_EXECUTABLE` pointed at a
+nonexistent path: `dbt_build` failed, `observability_report` succeeded, and the
+DAG run state was `failed`. Proving the failure path is as important as proving
+the success path — the success path was already green while the failure path was
+silently broken.

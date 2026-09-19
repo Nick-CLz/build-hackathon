@@ -1,0 +1,10 @@
+# Pinned to match the root pyproject.toml. Divergence here would mean the DAG
+# runs a different Spark or dbt than `make dbt-build` does, which is exactly
+# the class of drift that makes "works locally" meaningless.
+astronomer-cosmos==1.15.1
+pyspark==3.5.9
+delta-spark==3.3.3
+dbt-core==1.12.5
+dbt-spark[session]==1.11.0
+Faker>=40,<41
+PyYAML>=6,<7

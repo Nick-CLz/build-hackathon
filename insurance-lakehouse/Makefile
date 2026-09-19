@@ -176,3 +176,40 @@ dbt-docs: ## Generate and serve dbt docs
 .PHONY: dbt-test-singular
 dbt-test-singular: ## Run only the singular (hand-written) dbt tests
 	$(DBT) test $(DBT_DIRS) --target $(DBT_TARGET) -s "test_type:singular"
+
+.PHONY: report
+report: ## Parse dbt artifacts into Delta + render reports/observability.html
+	$(PY) scripts/build_observability_report.py
+
+.PHONY: dbt-manifest
+dbt-manifest: ## Build dbt manifest.json (Cosmos loads the DAG from this)
+	$(DBT) parse $(DBT_DIRS) --target $(DBT_TARGET)
+
+# ---------------------------------------------------------------- airflow
+AIRFLOW_VENV := .venv-airflow
+AIRFLOW_LOCAL_ENV := AIRFLOW_HOME=$(CURDIR)/lakehouse/airflow_home \
+  AIRFLOW__CORE__DAGS_FOLDER=$(CURDIR)/airflow/dags \
+  AIRFLOW__CORE__LOAD_EXAMPLES=False \
+  LAKEHOUSE_REPO=$(CURDIR) DBT_EXECUTABLE=$(CURDIR)/$(VENV)/bin/dbt \
+  PATH="$(CURDIR)/$(VENV)/bin:$$PATH"
+
+.PHONY: airflow-setup
+airflow-setup: ## Install Airflow into a separate venv for local DAG runs
+	uv venv --python 3.11 $(AIRFLOW_VENV)
+	VIRTUAL_ENV=$(CURDIR)/$(AIRFLOW_VENV) uv pip install \
+	  "apache-airflow==3.3.2" "apache-airflow-providers-standard" "astronomer-cosmos==1.15.1"
+
+.PHONY: airflow-test
+airflow-test: ## Execute the DAG end-to-end locally (no containers needed)
+	@mkdir -p lakehouse/airflow_home
+	$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow db migrate >/dev/null
+	$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow dags reserialize >/dev/null
+	$(AIRFLOW_LOCAL_ENV) $(AIRFLOW_VENV)/bin/airflow dags test insurance_lakehouse $(or $(DATE),2026-09-19)
+
+.PHONY: airflow-up
+airflow-up: ## Start Airflow via the Astro CLI (webserver on :8080)
+	cd airflow && astro dev start
+
+.PHONY: airflow-down
+airflow-down: ## Stop the Astro environment
+	cd airflow && astro dev stop
