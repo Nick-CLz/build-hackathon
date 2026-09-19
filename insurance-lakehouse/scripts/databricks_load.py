@@ -162,26 +162,49 @@ def quarantine(cur, source, catalog: str) -> None:
     table = f"{catalog}.bronze.{source.name}"
     qtable = f"{catalog}.bronze.{source.name}_quarantine"
 
-    conditions = []
+    cur.execute(f"DESCRIBE TABLE {table}")
+    columns = [r[0] for r in cur.fetchall() if r[0] and not r[0].startswith("#")]
+    business = [c for c in columns if not c.startswith("_")]
+
+    # Order matters: the first matching condition supplies the reason, and the
+    # local engine reports "unparseable" in preference to "no key" for a record
+    # that is both.
+    conditions: list[tuple[str, str]] = []
+
+    if "_rescued_data" in columns:
+        conditions.append(("_rescued_data IS NOT NULL", "unparseable_record"))
+
+    if source.format == "json" and business:
+        # Databricks' JSON reader is more permissive than the local one. Given
+        # `{not valid json` it does NOT populate _rescued_data -- it emits a row
+        # with every field null. A JSON object cannot legitimately produce that,
+        # so the shape itself is the evidence of a parse failure, and labelling
+        # it "unparseable" rather than "no primary key" keeps the two targets
+        # describing the same defect the same way.
+        all_null = " AND ".join(f"`{c}` IS NULL" for c in business)
+        conditions.append((f"({all_null})", "unparseable_record"))
+
     if source.primary_key:
         pk = " OR ".join(
             f"`{c}` IS NULL OR trim(cast(`{c}` AS STRING)) = ''" for c in source.primary_key
         )
         conditions.append((f"({pk})", "missing_primary_key"))
 
-    cur.execute(f"DESCRIBE TABLE {table}")
-    columns = {r[0] for r in cur.fetchall() if r[0] and not r[0].startswith("#")}
-    if "_rescued_data" in columns:
-        conditions.append(("_rescued_data IS NOT NULL", "unparseable_record"))
-
     if not conditions:
         return
 
     predicate = " OR ".join(c for c, _ in conditions)
+
+    # Only materialise a quarantine table when something is actually quarantined.
+    # Creating one per source leaves a dozen empty tables that imply a problem
+    # where there is none, and diverges from the local layout.
+    cur.execute(f"SELECT count(*) FROM {table} WHERE {predicate}")
+    if cur.fetchone()[0] == 0:
+        return
+
     reason = (
         "CASE " + " ".join(f"WHEN {cond} THEN '{label}'" for cond, label in conditions) + " END"
     )
-
     cur.execute(
         f"CREATE TABLE IF NOT EXISTS {qtable} AS "
         f"SELECT *, CAST(NULL AS STRING) AS _quarantine_reason FROM {table} WHERE 1 = 0"
