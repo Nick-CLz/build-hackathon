@@ -1,0 +1,113 @@
+---
+version: 2
+
+models:
+  - name: dim_customer
+    description: >
+      Grain: one row per customer_id. PII is MASKED here -- silver keeps
+      identifiable values for operational joins and right-to-erasure lookups,
+      and gold is what analysts and BI read. national_id is salted-hashed rather
+      than dropped so masked data still joins.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: national_id_hash
+        description: SHA-256 of salt || national_id. Deterministic, so it still joins.
+        meta: {pii: true, pii_type: national_id, sensitivity: high, masked: true}
+      - name: phone_masked
+        meta: {pii: true, pii_type: phone, sensitivity: medium, masked: true}
+      - name: email_masked
+        meta: {pii: true, pii_type: email, sensitivity: medium, masked: true}
+      - name: birth_year
+        meta: {pii: true, pii_type: dob, sensitivity: medium, masked: true}
+      - name: address_masked
+        meta: {pii: true, pii_type: address, sensitivity: medium, masked: true}
+      - name: age_band
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+
+  - name: dim_vehicle
+    description: "Grain: one row per vehicle_id. Plate and chassis partially masked."
+    columns:
+      - name: vehicle_id
+        data_tests: [unique, not_null]
+      - name: plate_masked
+        meta: {pii: true, pii_type: plate, sensitivity: medium, masked: true}
+      - name: chassis_masked
+        meta: {pii: true, pii_type: chassis, sensitivity: medium, masked: true}
+
+  - name: dim_product
+    description: >
+      Grain: one row per product_code. cover_class exposes the Thai voluntary
+      motor class, without which cross-class loss-ratio comparison is meaningless.
+    columns:
+      - name: product_code
+        data_tests: [unique, not_null]
+      - name: cover_class
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [compulsory, class_1, class_2, class_3, health]
+
+  - name: dim_partner
+    description: "Grain: one row per partner_code."
+    columns:
+      - name: partner_code
+        data_tests: [unique, not_null]
+
+  - name: dim_date
+    description: >
+      Grain: one row per calendar date. Spans the actual data range plus
+      headroom so a backfill cannot fall outside it. Carries the Buddhist Era
+      year for Thai-facing reports.
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+      - name: date_key
+        data_tests: [unique, not_null]
+
+  - name: fct_written_premium
+    description: >
+      Grain: one row per policy_id. Written premium is recognised in FULL at
+      inception, which is what makes it the wrong denominator for a loss ratio.
+    columns:
+      - name: policy_id
+        data_tests: [unique, not_null]
+      - name: written_premium_thb
+        data_tests:
+          - not_null:
+              config: {severity: warn}
+
+  - name: fct_earned_premium
+    description: >
+      Grain: one row per (policy_id, month_start). Pro-rata by days of exposure,
+      using half-open [start, end) intervals so months tile exactly. Cancellation
+      truncates exposure; exposure never extends past today. Also emits
+      exposure_policy_years, the correct denominator for claim frequency.
+    columns:
+      - name: policy_id
+        data_tests: [not_null]
+      - name: earned_premium_thb
+        data_tests:
+          - not_null:
+              config: {severity: warn}
+      - name: days_on_risk
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 31, inclusive: true}
+
+  - name: fct_claims
+    description: >
+      Grain: one row per claim_id. Dated by BOTH loss date and reported date,
+      because they answer different questions and silently picking one is how a
+      claims report and a finance report stop agreeing. Orphans and
+      out-of-coverage losses are kept and flagged rather than dropped.
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: gross_incurred_thb
+        data_tests:
+          - not_null:
+              config: {severity: warn}

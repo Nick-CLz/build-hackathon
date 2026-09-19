@@ -32,13 +32,25 @@ round(
 
 {#  The join that convert_currency() depends on.
 
-    Left join: an amount whose rate is missing must survive into the model as a
-    NULL converted value so a test can catch it, rather than dropping the row
+    Range join, not an equality join. Each rate is valid from its own date until
+    the next supersedes it, so this resolves to the most recent rate ON OR
+    BEFORE the transaction date -- last-observation-carried-forward, which is
+    what every treasury system does.
+
+    An equality join on rate_date looks correct and fails silently on weekends
+    and holidays (FX feeds publish on trading days only), on any date past the
+    last published rate, and on any gap in the feed. Each of those produces a
+    NULL converted amount for a reason unrelated to the data being wrong.
+
+    Left join: an amount with genuinely no applicable rate -- a transaction
+    predating the first rate ever published -- must still survive into the model
+    as a NULL converted value so a test can catch it, rather than being dropped
     and quietly shrinking the fact table. #}
 {% macro fx_join(currency_col, date_col, target=none, fx_alias='fx', fx_relation=none) -%}
 {%- set tgt = target or var('reporting_currency') -%}
 left join {{ fx_relation or ref('stg_fx_rates') }} as {{ fx_alias }}
     on {{ fx_alias }}.from_currency = {{ currency_col }}
    and {{ fx_alias }}.to_currency = '{{ tgt }}'
-   and {{ fx_alias }}.rate_date = {{ date_col }}
+   and {{ date_col }} >= {{ fx_alias }}.valid_from
+   and ({{ date_col }} < {{ fx_alias }}.valid_to or {{ fx_alias }}.valid_to is null)
 {%- endmacro %}

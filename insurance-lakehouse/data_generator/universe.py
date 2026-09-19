@@ -115,6 +115,19 @@ CLAIM_CAUSES_MOTOR = [
 ]
 CLAIM_CAUSES_HEALTH = ["ipd_admission", "opd_visit", "surgery", "critical_illness"]
 
+# Claim severity as a multiple of written premium, by product. Chosen so that
+# multiple * claim_frequency lands each product in a plausible loss-ratio band.
+# Compulsory motor runs hot on purpose: it is a thin-margin statutory product
+# that insurers cross-subsidise, which is a real feature of the Thai market.
+SEVERITY_MULTIPLE = {
+    "MOTOR_CMI": (4.0, 14.0),  # statutory bodily-injury caps, thin premium
+    "MOTOR_VOL_C1": (3.0, 11.0),  # own damage included: higher frequency, lower severity per baht
+    "MOTOR_VOL_C2": (3.5, 12.0),
+    "MOTOR_VOL_C3": (3.0, 10.0),  # third party only
+    "HEALTH_ADJ": (2.5, 9.0),  # many small episodes
+    "_default": (3.0, 11.0),
+}
+
 
 def _weighted(rng: random.Random, options, weights):
     return rng.choices(options, weights=weights, k=1)[0]
@@ -172,7 +185,15 @@ def build_universe(cfg: GeneratorConfig) -> Universe:
     # Daily IDR->THB with a gentle random walk, plus the identity row for THB.
     rate = 0.00223
     d = horizon_start
-    while d <= cfg.base_date + timedelta(days=cfg.max_days + 2):
+    # The spine must extend well past base_date. A policy's inception date is its
+    # quote date plus up to 21 days, so inceptions run past the last daily batch;
+    # with a spine ending at base_date those policies found no rate and their
+    # converted premium came out NULL. That NULL was caught by a not_null test
+    # rather than silently passing an unconverted IDR amount through as THB,
+    # which is the behaviour convert_currency is designed for -- but the spine
+    # should cover the data regardless.
+    fx_end = cfg.base_date + timedelta(days=cfg.max_days + 60)
+    while d <= fx_end:
         rate *= 1 + rng.gauss(0, 0.004)
         u.fx_rates.append(
             {
@@ -458,13 +479,27 @@ def _build_policy_lifecycle(u: Universe, rng: random.Random) -> None:
             lag = rng.choice([0, 0, 1, 1, 2, 3, 5, 8, 14, 21, 30, 45, 60])
             reported = loss + timedelta(days=lag)
             is_late = lag >= 21
+            # Severity is scaled off PREMIUM, not sum insured, then capped at
+            # the sum insured. Scaling off sum insured alone is what produced a
+            # 667% loss ratio on Thai compulsory motor in an earlier version:
+            # the premium is statutorily fixed at ~THB 645 while the sum insured
+            # is THB 500,000, so any fraction of the sum insured dwarfs the
+            # premium. Pricing works the other way round -- premium is set to
+            # cover expected losses -- so a realistic book has
+            # severity ~ premium / frequency, times a spread.
+            #
+            # With claim_frequency ~0.085 and the multiples below, portfolio
+            # loss ratios land in the 45-85% band that a real motor and health
+            # book occupies, which is what makes mart_loss_ratio worth reading.
             if pol["line_of_business"] == "motor":
                 cause = rng.choice(CLAIM_CAUSES_MOTOR)
-                severity = pol["sum_insured"] * rng.uniform(0.004, 0.22)
+                multiple = SEVERITY_MULTIPLE.get(pol["product_code"], SEVERITY_MULTIPLE["_default"])
             else:
                 cause = rng.choice(CLAIM_CAUSES_HEALTH)
-                severity = pol["sum_insured"] * rng.uniform(0.008, 0.30)
-            incurred = round(severity, 2)
+                multiple = SEVERITY_MULTIPLE["HEALTH_ADJ"]
+            severity = pol["written_premium"] * rng.uniform(*multiple)
+            # A claim cannot exceed the sum insured.
+            incurred = round(min(severity, pol["sum_insured"]), 2)
             status = rng.choice(["OPEN", "SETTLED", "SETTLED", "SETTLED", "REJECTED"])
             paid_amt = (
                 incurred

@@ -290,32 +290,3 @@ minimising it:
 That last point is the one that lands: the interesting skill is not generating
 code, it is building the harness that catches the generator being confidently
 wrong.
-
----
-
-## Culture round (Chief Data Officer)
-
-I can give you the structure; the specifics are yours and I am not going to
-invent them. **Headline → context → what you did → result**, 60–90 seconds,
-rehearsed until it runs clean in one pass.
-
-| Story | Headline should assert | Make sure you include |
-|---|---|---|
-| **17-team RCSA** — leading without authority | That you got 17 teams aligned with no mandate over any of them | The specific mechanism that created buy-in; what you did when someone refused; the measurable outcome |
-| **LSEG FinOps** — migration / cost win | A number, stated early | The baseline, how you measured it, what you traded away, whether the saving held |
-| **ECCO costing** — messy data → trusted product | That people changed a decision because they trusted the output | What "untrusted" looked like before; the specific quality control that changed minds; who uses it now |
-| **Mentoring** | A named person's trajectory, not your process | What they could not do before; what you actually did; where they are now |
-
-Two notes from your feedback on the last process:
-
-1. **Headline first.** Do not build to the point — a Head of Data will
-   interrupt before you reach it. "We cut Databricks spend 40% in a quarter"
-   *then* the context.
-2. **Rehearse aloud, once through, no restarts.** These fail by rambling past
-   90 seconds, not by lacking content. Time yourself.
-
-For the risk-background angle the brief specifically rewards: the governance
-work here is where it shows. PII classification lives in one place and the Unity
-Catalog SQL is *generated* from it, so tags cannot drift from models — that is a
-control design argument, not a data engineering one, and it is what will
-separate you from candidates who bolt on `GRANT` statements at the end.

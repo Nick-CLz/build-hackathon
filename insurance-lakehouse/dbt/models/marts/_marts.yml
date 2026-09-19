@@ -1,0 +1,68 @@
+---
+version: 2
+
+models:
+  - name: mart_loss_ratio
+    description: >
+      Grain: one row per (year_month, country, partner_code, product_code).
+      Loss ratio = incurred claims / EARNED premium. Using written premium
+      instead is the most common error in insurance reporting: it flatters a
+      growing book and punishes a shrinking one. Claims are attributed by LOSS
+      month, so a late-reported claim lands in the period it belongs to -- which
+      is exactly what the lookback window in silver_claims makes possible.
+    columns:
+      - name: loss_ratio
+        description: >
+          NULL, not zero, when earned premium is zero. A zero would average into
+          portfolio rollups as though it were a real, excellent result.
+      - name: is_credible
+        description: >
+          True when the cell has at least 5 policy-years of exposure and 3
+          claims. Low-credibility cells produce arithmetically correct but
+          actuarially meaningless ratios and should be excluded from decisions.
+        data_tests: [not_null]
+      - name: credibility_band
+        data_tests:
+          - accepted_values:
+              arguments: {values: [very_low, low, partial, full]}
+      - name: claim_frequency
+        description: Claims per policy-YEAR of exposure, not per policy.
+      - name: earned_premium_thb
+        data_tests: [not_null]
+
+    data_tests:
+      - dbt_utils.expression_is_true:
+          config: {severity: warn}
+          arguments:
+            expression: "loss_ratio <= 3"
+            config: {where: "is_credible"}
+
+  - name: mart_quote_conversion
+    description: >
+      Grain: one row per (quote_year_month, country, partner_code,
+      product_code, channel). Attributed to the QUOTE's month, not the policy's.
+    columns:
+      - name: conversion_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 1, inclusive: true}
+      - name: quotes_issued
+        data_tests: [not_null]
+
+  - name: mart_claims_lag
+    description: >
+      Grain: one row per (loss_year_month, country, product_code). Makes late
+      arrival visible and turns claims_lookback_days from a guess into a
+      measured decision -- if p99 lag exceeds the window, claims are landing
+      outside it and understating their loss month.
+    columns:
+      - name: beyond_lookback_window
+        description: >
+          Claims a re-run would NOT pick up. Should be at or near zero; if not,
+          raise claims_lookback_days.
+        data_tests:
+          - dbt_utils.accepted_range:
+              config: {severity: warn}
+              arguments: {min_value: 0, max_value: 5, inclusive: true}
+      - name: p99_lag_days
+        data_tests: [not_null]
