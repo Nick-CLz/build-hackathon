@@ -67,8 +67,27 @@ Network prerequisites confirmed reachable: Maven Central (Delta JARs), `hub.getd
 
 ### Two findings that change the design
 
-1. **`ALTER TABLE ... CLUSTER BY` succeeds in OSS Delta 3.3.** The common claim that "liquid clustering is Databricks-only" is too coarse. OSS Delta 3.x supports *clustered tables*; what stays Databricks-only is `OPTIMIZE FULL` re-clustering, automatic/predictive optimization, and auto-compaction. `docs/decisions.md` and the maintenance script will state this precisely rather than repeating the folk wisdom.
+1. **`ALTER TABLE ... CLUSTER BY` succeeds in OSS Delta 3.3** -- but only on an *unpartitioned* table. The common claim that "liquid clustering is Databricks-only" is too coarse; OSS Delta 3.x does support clustered tables. The rest of this note was wrong and is superseded by the correction below.
 2. **Spark defaults matter enormously for laptop speed.** With stock settings, `VACUUM` alone fanned out to a 10,000-partition job and the smoke test took 92s. The skeleton will ship `spark.sql.shuffle.partitions=4`, `spark.databricks.delta.snapshotPartitions=4` and matching parallelism via a repo-local `SPARK_CONF_DIR`, which is also how the Delta extensions get injected into the SparkSession that dbt's session method creates (dbt-spark calls a bare `SparkSession.builder.getOrCreate()`, so config must arrive out-of-band).
+
+### Correction to finding 1, after actually probing it (Phase 2)
+
+Finding 1 was right that OSS Delta supports clustering and **wrong** about what stays proprietary. `ingestion/maintenance.py` attempts each operation rather than asserting it; against the pinned versions it reports 8 of 9 supported locally:
+
+```
+[OK  ] OPTIMIZE (bin-packing)             [OK  ] CLUSTER BY on UNPARTITIONED table
+[OK  ] OPTIMIZE ZORDER BY (policy_no)     [OK  ] OPTIMIZE on clustered table
+[OK  ] VACUUM RETAIN 0 HOURS              [OK  ] OPTIMIZE FULL (re-cluster)
+[OK  ] Time travel (versionAsOf 0)        [FAIL] CLUSTER BY on PARTITIONED table
+```
+
+Two corrections:
+
+* **`OPTIMIZE FULL` is not Databricks-only.** It runs in OSS Delta 3.3; it just requires a table with non-empty clustering columns.
+* **The single failure is not a missing feature.** Clustering and Hive-style partitioning are mutually exclusive (`DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED`). Bronze partitions by `_batch_date`, so clustering is unavailable there by construction. On Databricks that table would use liquid clustering *instead of* partitioning — which is the real porting note.
+
+Genuinely proprietary: predictive optimization, `CLUSTER BY AUTO`, auto-compaction defaults, default-on deletion vectors, Unity Catalog governance.
+
 
 ### Open risks, with pre-agreed fallbacks
 

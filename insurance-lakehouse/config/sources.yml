@@ -1,0 +1,211 @@
+---
+# Source registry. Adding a source is a change to THIS FILE ONLY -- the bronze
+# ingestion engine is generic over everything declared here.
+#
+# Each entry drives four things:
+#   1. how the file is read (format + reader options)
+#   2. how bronze lands and partitions it
+#   3. the PII classification mirrored into governance/ for Unity Catalog
+#   4. the dbt source freshness SLA emitted into dbt/models/sources.yml
+#
+# `primary_key` is documentation plus the quarantine rule: a record that cannot
+# supply its own key cannot be deduplicated or merged downstream, so it is
+# quarantined rather than landed. Everything else lands raw, as-is.
+
+version: 1
+
+defaults:
+  landing_root: lakehouse/landing
+  bronze_path: lakehouse/bronze
+  bronze_schema: bronze
+  batch_date_from_path: 'dt=([0-9]{4}-[0-9]{2}-[0-9]{2})'
+
+sources:
+  # ---------------------------------------------------------------- partners
+  - name: partner_policies_a
+    description: >
+      Partner policy drops in schema variant A (snake_case English, ISO/DMY
+      dates, THB). Registered separately from B and C because the partners
+      genuinely disagree on column names -- harmonisation happens in silver.
+    format: csv
+    path: partner_drops/{SIAMGUARD,THAIVIVAT}/dt=*/policies_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [policy_no]
+    timestamp_column: last_updated_at
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}
+    pii_columns:
+      cust_national_id: {pii_type: national_id, sensitivity: high}
+      plate_no: {pii_type: plate, sensitivity: medium}
+
+  - name: partner_policies_b
+    description: >
+      Schema variant B (Thai insurer, PascalCase, Buddhist Era years, Thai
+      status values). The BE dates are why be_to_ce_date() exists.
+    format: csv
+    path: partner_drops/{BKKSURE,KRUNGSRI_GI}/dt=*/policies_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [PolicyNumber]
+    timestamp_column: UpdatedTimestamp
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}
+    pii_columns:
+      IDCard: {pii_type: national_id, sensitivity: high}
+      VehiclePlate: {pii_type: plate, sensitivity: medium}
+
+  - name: partner_policies_c
+    description: Schema variant C (Indonesian partner, Bahasa column names, IDR).
+    format: csv
+    path: partner_drops/{NUSANTARA,GARUDA_INS}/dt=*/policies_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [nomor_polis]
+    timestamp_column: waktu_pembaruan
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 30, error_after_hours: 72}
+    pii_columns:
+      no_ktp: {pii_type: national_id, sensitivity: high}
+      nomor_plat: {pii_type: plate, sensitivity: medium}
+
+  - name: partner_claims_a
+    description: Partner claim drops, schema variant A.
+    format: csv
+    path: partner_drops/{SIAMGUARD,THAIVIVAT}/dt=*/claims_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [claim_no]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}
+
+  - name: partner_claims_b
+    description: Partner claim drops, schema variant B (Buddhist Era dates).
+    format: csv
+    path: partner_drops/{BKKSURE,KRUNGSRI_GI}/dt=*/claims_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [ClaimNumber]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}
+
+  - name: partner_claims_c
+    description: Partner claim drops, schema variant C.
+    format: csv
+    path: partner_drops/{NUSANTARA,GARUDA_INS}/dt=*/claims_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [nomor_klaim]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 30, error_after_hours: 72}
+
+  # ------------------------------------------------- internal service events
+  - name: events_quotes
+    description: Quote service events, JSON lines.
+    format: json
+    path: events/quotes/dt=*/quotes_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [quote_id]
+    timestamp_column: quoted_at
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 12, error_after_hours: 24}
+
+  - name: events_endorsements
+    description: Policy endorsement events, including backdated ones.
+    format: json
+    path: events/endorsements/dt=*/endorsements_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [endorsement_id]
+    timestamp_column: requested_date
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 12, error_after_hours: 24}
+
+  - name: events_premium_payments
+    description: Premium instalments and pro-rata cancellation refunds.
+    format: json
+    path: events/premium_payments/dt=*/payments_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [payment_id]
+    timestamp_column: paid_date
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 12, error_after_hours: 24}
+
+  - name: events_claims
+    description: >
+      Claim notifications from the internal service. Late-reported claims arrive
+      in a batch well after their loss date -- the reason the silver claims model
+      carries a lookback window.
+    format: json
+    path: events/claims/dt=*/claims_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [claim_id]
+    timestamp_column: reported_date
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 12, error_after_hours: 24}
+
+  # ------------------------------------------------------------------- CDC
+  - name: cdc_policies
+    description: >
+      Debezium-style change feed for policies, with op (I/U/D) and ts. Bronze
+      keeps every change event; silver collapses to latest-per-key.
+    format: json
+    path: cdc/policies/dt=*/policies_cdc_*.jsonl
+    reader_options: {mode: PERMISSIVE}
+    primary_key: [policy_id, ts]
+    timestamp_column: ts
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 6, error_after_hours: 12}
+    pii_columns: {}
+
+  # ------------------------------------------------------------- reference
+  - name: ref_customers
+    description: Customer master snapshot.
+    format: csv
+    path: reference/customers/dt=*/customers_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [customer_id]
+    timestamp_column: created_at
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 48, error_after_hours: 96}
+    pii_columns:
+      national_id: {pii_type: national_id, sensitivity: high}
+      phone: {pii_type: phone, sensitivity: medium}
+      email: {pii_type: email, sensitivity: medium}
+      date_of_birth: {pii_type: dob, sensitivity: medium}
+      address: {pii_type: address, sensitivity: medium}
+      first_name: {pii_type: name, sensitivity: medium}
+      last_name: {pii_type: name, sensitivity: medium}
+
+  - name: ref_vehicles
+    description: Insured vehicle master snapshot.
+    format: csv
+    path: reference/vehicles/dt=*/vehicles_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [vehicle_id]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 48, error_after_hours: 96}
+    pii_columns:
+      plate_no: {pii_type: plate, sensitivity: medium}
+      chassis_no: {pii_type: chassis, sensitivity: medium}
+
+  - name: ref_products
+    description: Product catalogue.
+    format: csv
+    path: reference/products/dt=*/products_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [product_code]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 48, error_after_hours: 168}
+
+  - name: ref_partner_insurers
+    description: Partner carrier master.
+    format: csv
+    path: reference/partner_insurers/dt=*/partner_insurers_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [partner_code]
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 48, error_after_hours: 168}
+
+  - name: ref_fx_rates
+    description: Daily FX rates into the reporting currency (THB).
+    format: csv
+    path: reference/fx_rates/dt=*/fx_rates_*.csv
+    reader_options: {header: 'true', mode: PERMISSIVE, encoding: UTF-8}
+    primary_key: [rate_date, from_currency, to_currency]
+    timestamp_column: rate_date
+    partition_by: [_batch_date]
+    freshness: {warn_after_hours: 26, error_after_hours: 50}

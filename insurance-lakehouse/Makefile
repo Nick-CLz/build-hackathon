@@ -83,6 +83,13 @@ format: ## Auto-fix formatting and simple lint errors
 docs-sync: ## Regenerate generated tables in docs/
 	$(PY) scripts/sync_doc_tables.py
 
+.PHONY: dbt-sources
+dbt-sources: ## Regenerate dbt/models/sources.yml from config/sources.yml
+	$(PY) scripts/generate_dbt_sources.py
+
+.PHONY: generate
+generate: docs-sync dbt-sources ## Regenerate every generated file
+
 # ---------------------------------------------------------------- cleanup
 .PHONY: clean
 clean: ## Remove generated data and caches (keeps the venv)
@@ -92,3 +99,39 @@ clean: ## Remove generated data and caches (keeps the venv)
 .PHONY: reset
 reset: clean ## clean, plus drop the venv and dbt packages
 	rm -rf $(VENV) dbt/dbt_packages metastore_db derby.log
+
+# ---------------------------------------------------------------- bronze
+.PHONY: bronze
+bronze: ## Ingest the landing zone into bronze Delta tables (idempotent)
+	$(PY) -m ingestion
+
+.PHONY: sources
+sources: ## List the registered sources from config/sources.yml
+	$(PY) -m ingestion --list-sources
+
+.PHONY: maintenance
+maintenance: ## Probe Delta OPTIMIZE/ZORDER/CLUSTER BY/VACUUM/time travel support
+	$(PY) scripts/delta_maintenance.py --source $(or $(SOURCE),partner_policies_a)
+
+.PHONY: inspect
+inspect: ## Show bronze tables, manifest, schema drift and quarantine
+	$(PY) scripts/inspect_bronze.py
+
+# ---------------------------------------------------------------- docker
+COMPOSE := docker compose -f docker/docker-compose.yml
+
+.PHONY: build
+build: ## Build the Spark + Delta + dbt Docker image
+	$(COMPOSE) build
+
+.PHONY: up
+up: ## Start the container in the background
+	$(COMPOSE) up -d
+
+.PHONY: down
+down: ## Stop and remove the container
+	$(COMPOSE) down
+
+.PHONY: shell
+shell: ## Open a shell inside the container
+	$(COMPOSE) run --rm lakehouse bash

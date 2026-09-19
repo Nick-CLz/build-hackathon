@@ -1,0 +1,353 @@
+# GENERATED FILE -- do not edit by hand.
+# Regenerate with `make dbt-sources` after editing config/sources.yml.
+# Freshness SLAs, primary keys and PII tags all originate there.
+version: 2
+sources:
+  - name: bronze
+    description: Raw landed data. Bronze adds metadata columns and nothing else; all cleaning happens
+      in silver.
+    schema: bronze
+    tables:
+      - name: partner_policies_a
+        description: Partner policy drops in schema variant A (snake_case English, ISO/DMY dates, THB).
+          Registered separately from B and C because the partners genuinely disagree on column names --
+          harmonisation happens in silver.
+        meta:
+          primary_key:
+            - policy_no
+          source_format: csv
+          landing_path: partner_drops/{SIAMGUARD,THAIVIVAT}/dt=*/policies_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour
+        columns:
+          - name: cust_national_id
+            description: PII (national_id, sensitivity high).
+            meta:
+              pii: true
+              pii_type: national_id
+              sensitivity: high
+          - name: plate_no
+            description: PII (plate, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: plate
+              sensitivity: medium
+      - name: partner_policies_b
+        description: Schema variant B (Thai insurer, PascalCase, Buddhist Era years, Thai status values).
+          The BE dates are why be_to_ce_date() exists.
+        meta:
+          primary_key:
+            - PolicyNumber
+          source_format: csv
+          landing_path: partner_drops/{BKKSURE,KRUNGSRI_GI}/dt=*/policies_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour
+        columns:
+          - name: IDCard
+            description: PII (national_id, sensitivity high).
+            meta:
+              pii: true
+              pii_type: national_id
+              sensitivity: high
+          - name: VehiclePlate
+            description: PII (plate, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: plate
+              sensitivity: medium
+      - name: partner_policies_c
+        description: Schema variant C (Indonesian partner, Bahasa column names, IDR).
+        meta:
+          primary_key:
+            - nomor_polis
+          source_format: csv
+          landing_path: partner_drops/{NUSANTARA,GARUDA_INS}/dt=*/policies_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 30
+            period: hour
+          error_after:
+            count: 72
+            period: hour
+        columns:
+          - name: no_ktp
+            description: PII (national_id, sensitivity high).
+            meta:
+              pii: true
+              pii_type: national_id
+              sensitivity: high
+          - name: nomor_plat
+            description: PII (plate, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: plate
+              sensitivity: medium
+      - name: partner_claims_a
+        description: Partner claim drops, schema variant A.
+        meta:
+          primary_key:
+            - claim_no
+          source_format: csv
+          landing_path: partner_drops/{SIAMGUARD,THAIVIVAT}/dt=*/claims_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour
+      - name: partner_claims_b
+        description: Partner claim drops, schema variant B (Buddhist Era dates).
+        meta:
+          primary_key:
+            - ClaimNumber
+          source_format: csv
+          landing_path: partner_drops/{BKKSURE,KRUNGSRI_GI}/dt=*/claims_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour
+      - name: partner_claims_c
+        description: Partner claim drops, schema variant C.
+        meta:
+          primary_key:
+            - nomor_klaim
+          source_format: csv
+          landing_path: partner_drops/{NUSANTARA,GARUDA_INS}/dt=*/claims_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 30
+            period: hour
+          error_after:
+            count: 72
+            period: hour
+      - name: events_quotes
+        description: Quote service events, JSON lines.
+        meta:
+          primary_key:
+            - quote_id
+          source_format: json
+          landing_path: events/quotes/dt=*/quotes_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 12
+            period: hour
+          error_after:
+            count: 24
+            period: hour
+      - name: events_endorsements
+        description: Policy endorsement events, including backdated ones.
+        meta:
+          primary_key:
+            - endorsement_id
+          source_format: json
+          landing_path: events/endorsements/dt=*/endorsements_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 12
+            period: hour
+          error_after:
+            count: 24
+            period: hour
+      - name: events_premium_payments
+        description: Premium instalments and pro-rata cancellation refunds.
+        meta:
+          primary_key:
+            - payment_id
+          source_format: json
+          landing_path: events/premium_payments/dt=*/payments_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 12
+            period: hour
+          error_after:
+            count: 24
+            period: hour
+      - name: events_claims
+        description: Claim notifications from the internal service. Late-reported claims arrive in a batch
+          well after their loss date -- the reason the silver claims model carries a lookback window.
+        meta:
+          primary_key:
+            - claim_id
+          source_format: json
+          landing_path: events/claims/dt=*/claims_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 12
+            period: hour
+          error_after:
+            count: 24
+            period: hour
+      - name: cdc_policies
+        description: Debezium-style change feed for policies, with op (I/U/D) and ts. Bronze keeps every
+          change event; silver collapses to latest-per-key.
+        meta:
+          primary_key:
+            - policy_id
+            - ts
+          source_format: json
+          landing_path: cdc/policies/dt=*/policies_cdc_*.jsonl
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 6
+            period: hour
+          error_after:
+            count: 12
+            period: hour
+      - name: ref_customers
+        description: Customer master snapshot.
+        meta:
+          primary_key:
+            - customer_id
+          source_format: csv
+          landing_path: reference/customers/dt=*/customers_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 48
+            period: hour
+          error_after:
+            count: 96
+            period: hour
+        columns:
+          - name: national_id
+            description: PII (national_id, sensitivity high).
+            meta:
+              pii: true
+              pii_type: national_id
+              sensitivity: high
+          - name: phone
+            description: PII (phone, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: phone
+              sensitivity: medium
+          - name: email
+            description: PII (email, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: email
+              sensitivity: medium
+          - name: date_of_birth
+            description: PII (dob, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: dob
+              sensitivity: medium
+          - name: address
+            description: PII (address, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: address
+              sensitivity: medium
+          - name: first_name
+            description: PII (name, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: name
+              sensitivity: medium
+          - name: last_name
+            description: PII (name, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: name
+              sensitivity: medium
+      - name: ref_vehicles
+        description: Insured vehicle master snapshot.
+        meta:
+          primary_key:
+            - vehicle_id
+          source_format: csv
+          landing_path: reference/vehicles/dt=*/vehicles_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 48
+            period: hour
+          error_after:
+            count: 96
+            period: hour
+        columns:
+          - name: plate_no
+            description: PII (plate, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: plate
+              sensitivity: medium
+          - name: chassis_no
+            description: PII (chassis, sensitivity medium).
+            meta:
+              pii: true
+              pii_type: chassis
+              sensitivity: medium
+      - name: ref_products
+        description: Product catalogue.
+        meta:
+          primary_key:
+            - product_code
+          source_format: csv
+          landing_path: reference/products/dt=*/products_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 48
+            period: hour
+          error_after:
+            count: 168
+            period: hour
+      - name: ref_partner_insurers
+        description: Partner carrier master.
+        meta:
+          primary_key:
+            - partner_code
+          source_format: csv
+          landing_path: reference/partner_insurers/dt=*/partner_insurers_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 48
+            period: hour
+          error_after:
+            count: 168
+            period: hour
+      - name: ref_fx_rates
+        description: Daily FX rates into the reporting currency (THB).
+        meta:
+          primary_key:
+            - rate_date
+            - from_currency
+            - to_currency
+          source_format: csv
+          landing_path: reference/fx_rates/dt=*/fx_rates_*.csv
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:
+            count: 26
+            period: hour
+          error_after:
+            count: 50
+            period: hour

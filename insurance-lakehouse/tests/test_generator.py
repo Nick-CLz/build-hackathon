@@ -271,13 +271,45 @@ def test_claims_fall_within_coverage_before_defect_injection(tmp_path):
         assert pol["inception_date"] <= c["loss_date"] <= pol["expiry_date"]
 
 
-def test_jsonl_events_are_valid_json(tmp_path):
-    _gen(tmp_path)
+def test_jsonl_events_are_valid_json_except_deliberate_corruption(tmp_path):
+    """Every JSONL line must parse, apart from the lines we corrupt on purpose.
+
+    The malformed_records defect exists so bronze's quarantine path has
+    something real to catch. Asserting blanket validity here would force that
+    defect to be removed; asserting the exact count keeps both honest.
+    """
+    _, summaries = _gen(tmp_path)
+    bad = 0
     files = list(tmp_path.rglob("*.jsonl"))
     assert files
     for f in files:
         for line in f.read_text(encoding="utf-8").splitlines():
+            try:
+                json.loads(line)
+            except json.JSONDecodeError:
+                bad += 1
+    expected = sum(s["defects"]["malformed_records"] for s in summaries.values())
+    # Only the claims stream gets corrupted JSON; the CSV share of that counter
+    # is not JSON, so the corrupt lines are a subset of the reported total.
+    assert 0 < bad <= expected
+
+
+def test_no_corrupt_json_when_the_defect_is_disabled(tmp_path):
+    cfg = GeneratorConfig(n_policies=N, out_root=str(tmp_path), mess=MessToggles.all_off())
+    u = build_universe(cfg)
+    emit_day(u, 1)
+    for f in tmp_path.rglob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
             json.loads(line)
+
+
+def test_malformed_csv_rows_have_no_primary_key(tmp_path):
+    """The truncated CSV rows must be keyless, which is what bronze quarantines on."""
+    _gen(tmp_path)
+    p = tmp_path / "partner_drops/SIAMGUARD/dt=2026-01-05/policies_SIAMGUARD_20260105.csv"
+    rows = list(csv.DictReader(p.open(encoding="utf-8")))
+    keyless = [r for r in rows if not (r.get("policy_no") or "").strip()]
+    assert keyless, "expected at least one row with no policy_no"
 
 
 @pytest.mark.parametrize(

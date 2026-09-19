@@ -59,6 +59,10 @@ MESS_REGISTRY: dict[str, tuple[str, str]] = {
         "Negative premium, claim outside coverage, orphan foreign keys.",
         "quarantine at bronze; warn/error dbt tests at silver",
     ),
+    "malformed_records": (
+        "Truncated CSV lines with no primary key, and non-JSON lines in a JSONL stream.",
+        "bronze quarantines them with a reason; they never reach silver",
+    ),
     "mixed_currencies": (
         "THB and IDR amounts in one column, needing fx conversion.",
         "convert_currency() macro against fx_rates",
@@ -80,6 +84,7 @@ class MessToggles:
     backdated_endorsements: bool = True
     cancellations_refunds: bool = True
     schema_drift: bool = True
+    malformed_records: bool = True
     validation_failures: bool = True
     mixed_currencies: bool = True
 

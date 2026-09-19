@@ -224,6 +224,7 @@ behaviour can be isolated. This table is generated from
 | `cancellations_refunds` | Policy cancelled mid-term with a negative pro-rata refund payment. | premium >= 0 singular test carves out refunds |
 | `schema_drift` | A partner adds a new column in a later daily file. | bronze mergeSchema + drift audit table |
 | `validation_failures` | Negative premium, claim outside coverage, orphan foreign keys. | quarantine at bronze; warn/error dbt tests at silver |
+| `malformed_records` | Truncated CSV lines with no primary key, and non-JSON lines in a JSONL stream. | bronze quarantines them with a reason; they never reach silver |
 | `mixed_currencies` | THB and IDR amounts in one column, needing fx conversion. | convert_currency() macro against fx_rates |
 <!-- MESS_TABLE_END -->
 

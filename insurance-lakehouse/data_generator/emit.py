@@ -242,6 +242,35 @@ def _write_jsonl(path: str, rows: list[dict]) -> None:
             fh.write(json.dumps(r, default=str, ensure_ascii=False) + "\n")
 
 
+def _append_malformed_csv(path: str, n_cols: int, count: int) -> int:
+    """Append truncated rows: a short line, and one with an unterminated quote.
+
+    Both are things a partner SFTP drop genuinely contains after a failed
+    export. The first parses into nulls and so has no primary key to merge on;
+    the second breaks CSV tokenisation outright. Bronze quarantines both rather
+    than letting them poison a downstream join.
+    """
+    if count <= 0:
+        return 0
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        for i in range(count):
+            if i % 2 == 0:
+                fh.write("," * (n_cols - 1) + "\n")
+            else:
+                fh.write('"unterminated' + "," * (n_cols - 1) + "\n")
+    return count
+
+
+def _append_malformed_jsonl(path: str, count: int) -> int:
+    """Append lines that are not valid JSON, as a flaky producer would emit."""
+    if count <= 0:
+        return 0
+    with open(path, "a", encoding="utf-8") as fh:
+        for i in range(count):
+            fh.write("{not valid json\n" if i % 2 == 0 else '{"truncated": \n')
+    return count
+
+
 def _partner_policy_rows(u: Universe, day: int, partner: dict, rng: random.Random) -> list[dict]:
     """Policies this partner reports on ``day``, in that partner's own schema."""
     m = u.cfg.mess
@@ -279,7 +308,7 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
         summary["files"][os.path.relpath(path, root)] = len(rows)
 
     # ---- partner CSV drops -------------------------------------------
-    dup_exact = dup_near = 0
+    dup_exact = dup_near = malformed = 0
     for partner in u.partners:
         code = partner["partner_code"]
         variant = partner["schema_variant"]
@@ -311,6 +340,8 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
         p = f"{root}/partner_drops/{code}/dt={dt}/policies_{code}_{stamp}.csv"
         _write_csv(p, rows)
         record(p, rows)
+        if m.malformed_records and rows:
+            malformed += _append_malformed_csv(p, len(rows[0]), max(1, len(rows) // 400))
 
         claims = _partner_claims(u, day, code)
         crows = []
@@ -395,6 +426,8 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
         ],
     )
     record(p, clm)
+    if m.malformed_records and clm:
+        malformed += _append_malformed_jsonl(p, 2)
     summary["defects"]["late_claims"] = len([c for c in clm if c["is_late_reported"]])
 
     # ---- CDC change feed for policies ---------------------------------
@@ -434,6 +467,7 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
         _write_csv(p, [{k: ("" if v is None else v) for k, v in r.items()} for r in rows])
         record(p, rows)
 
+    summary["defects"]["malformed_records"] = malformed
     summary["defects"]["mixed_currencies"] = len({p["currency"] for p in u.policies})
     summary["total_rows"] = sum(summary["files"].values())
     return summary

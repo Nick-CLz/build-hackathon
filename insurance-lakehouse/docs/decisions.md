@@ -130,3 +130,122 @@ compute cannot be configured with custom Spark settings or JARs.
 **Consequence.** Two profiles, one dbt project. What Free Edition does and does
 not permit is probed empirically and recorded in `docs/databricks_port.md`
 rather than assumed.
+
+---
+
+## ADR-0006 — A manifest table, not a checkpoint, for bronze idempotency
+
+**Status:** accepted
+
+**Context.** Databricks Auto Loader tracks which files it has consumed in a
+RocksDB checkpoint. There is no OSS equivalent that behaves the same way, but
+re-running a batch must not duplicate rows.
+
+**Decision.** A Delta table, `bronze._ingestion_manifest`, records every file
+ingested. Before each run, files matching a source's glob are listed and those
+already present in the manifest are skipped.
+
+**File identity is `(path, size, mtime-to-the-second)`, not path alone.** Path
+alone would permanently skip a partner who overwrites yesterday's file with
+corrected content — a common real failure. Sub-second mtime was rejected because
+it does not survive the Delta round-trip cleanly and would make every re-read
+look like a new file.
+
+**Consequences.** `make bronze` is safely re-runnable; the second run reports
+`UP_TO_DATE` with zero new rows, which is asserted by
+`test_ingest_is_idempotent`. The manifest doubles as the run log the
+observability layer reads in Phase 3.
+
+---
+
+## ADR-0007 — Quarantine only what cannot be landed
+
+**Status:** accepted
+
+**Decision.** Bronze quarantines exactly two classes of record:
+
+| Reason | Example |
+|---|---|
+| `unparseable_record` | A non-JSON line in a JSONL stream |
+| `missing_primary_key` | A truncated CSV row with no key to merge on later |
+
+Everything else lands, including negative premiums, claims outside their
+coverage period, and orphan foreign keys.
+
+**Why.** Bronze's job is to be a faithful, replayable copy of what arrived.
+Business-rule violations are *signal*: they are what the dbt tests in silver
+exist to detect, and what the observability report is supposed to surface.
+Dropping them at bronze would hide the data-quality problem instead of
+measuring it — and would make the quarantine table a dumping ground whose
+growth tells you nothing specific.
+
+The two retained cases are different in kind: a record with no parseable
+structure or no key cannot be deduplicated, merged or joined by *any*
+downstream model, so landing it would corrupt silver rather than inform it.
+
+**Verified by** `test_quarantine_boundary_is_exact`, which feeds bronze a
+three-row file — valid, negative-premium, keyless — and asserts two land and one
+is quarantined. It is built by hand rather than from the generator because the
+generator injects defects probabilistically and a small sample can contain none.
+
+---
+
+## ADR-0008 — Group CSV files by header signature before reading
+
+**Status:** accepted
+
+**Context.** Spark's CSV reader derives its schema from a sample of the files in
+a read, then applies it to all of them. When a partner adds a column in a later
+file, the drifted header can be silently dropped depending on which files were
+sampled.
+
+**Decision.** Bronze reads the first line of each CSV, groups files by header
+signature, reads each group separately, and unions them with
+`unionByName(allowMissingColumns=True)`.
+
+**Why.** It makes drift explicit and deterministic instead of
+sample-dependent, and the grouping produces the drift signal for free — the
+column-set difference against the existing table is written to
+`bronze._schema_audit` before the widened write happens.
+
+**Verified.** Day 2 of the generator adds one column per partner variant; the
+audit table records `distribution_channel`, `AgentCode` and `kanal_distribusi`
+respectively, and `mergeSchema` widens each table.
+
+---
+
+## ADR-0009 — OSS Delta vs Databricks: probe, don't assume
+
+**Status:** accepted
+
+**Context.** Two assumptions made while planning this repo turned out to be
+wrong, and both would have ended up in the documentation as confident
+statements.
+
+**Decision.** `ingestion/maintenance.py` attempts each maintenance operation and
+reports the real outcome. `make maintenance` prints the matrix.
+
+**What the probe found** (Spark 3.5.9 / Delta 3.3.3, 8 of 9 supported locally):
+
+| Operation | OSS Delta 3.3 |
+|---|---|
+| `OPTIMIZE` (bin-packing) | works |
+| `OPTIMIZE ... ZORDER BY` | works |
+| `CLUSTER BY` on an **unpartitioned** table | works |
+| `OPTIMIZE ... FULL` (re-cluster) | works |
+| `VACUUM`, `DESCRIBE HISTORY`, time travel | works |
+| `CLUSTER BY` on a **partitioned** table | refused |
+
+**The two corrections.** `OPTIMIZE FULL` is *not* Databricks-only. And the one
+failure is not a missing feature: clustering and Hive-style partitioning are
+mutually exclusive (`DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED`).
+Bronze partitions by `_batch_date`, so clustering is unavailable there by
+construction — on Databricks that table would use liquid clustering *instead of*
+partitioning.
+
+**Genuinely Databricks-only:** predictive optimization, `CLUSTER BY AUTO`,
+auto-compaction defaults, default-on deletion vectors, Unity Catalog governance.
+
+**Why this matters beyond accuracy.** "Which Delta features are OSS?" is exactly
+the kind of question a Lead candidate gets asked, and the honest answer is more
+nuanced than either marketing or folklore suggests.

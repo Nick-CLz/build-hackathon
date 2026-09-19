@@ -1,0 +1,4 @@
+# Drop a CA bundle here and pass --build-arg EXTRA_CA_BUNDLE=<filename>.
+# Certificates are environment-specific, so none are committed.
+*
+!.gitignore
