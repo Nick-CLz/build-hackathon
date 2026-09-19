@@ -105,13 +105,25 @@ def copy_into(cur, registry, source, catalog: str, batch_id: str) -> None:
     table = f"{catalog}.bronze.{source.name}"
     pattern = f"{volume_root(catalog)}/{source.path}"
     fmt = "CSV" if source.format == "csv" else "JSON"
+    # Two different mergeSchema settings are needed, and they do different jobs.
+    #
+    # FORMAT_OPTIONS mergeSchema makes the reader infer across ALL files rather
+    # than a sample. Without it, a column a partner adds on day 2 is silently
+    # dropped: the rows still land, so row-count parity passes while the
+    # drifted column is missing. That is the same failure the local engine has
+    # (ADR-0008, fixed there by grouping files on header signature) showing up
+    # on a different platform through a different mechanism.
+    #
+    # COPY_OPTIONS mergeSchema, set below, is the other half: it lets the
+    # TARGET table gain the column once the reader has found it.
+    #
     # rescuedDataColumn captures content that did not parse into the declared
     # schema. Without it a malformed JSON line lands as a row of nulls that is
-    # indistinguishable from a sparse-but-valid record.
+    # indistinguishable from a sparse but valid record.
     opts = (
-        {"header": "true", "inferSchema": "false"}
+        {"header": "true", "inferSchema": "false", "mergeSchema": "true"}
         if source.format == "csv"
-        else {"rescuedDataColumn": "_rescued_data"}
+        else {"rescuedDataColumn": "_rescued_data", "mergeSchema": "true"}
     )
     opt_sql = ", ".join(f"'{k}' = '{v}'" for k, v in opts.items())
 
