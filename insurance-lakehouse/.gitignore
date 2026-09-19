@@ -1,0 +1,17 @@
+.env
+.venv/
+lakehouse/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+derby.log
+metastore_db/
+spark-warehouse/
+reports/
+airflow/.astro/
+airflow/dbt/
