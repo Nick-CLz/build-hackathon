@@ -303,3 +303,9 @@ databricks-build: ## Run the same dbt project against Databricks
 databricks-parity: ## Compare local vs Databricks row counts (run BEFORE governance)
 	$(PY) scripts/databricks_parity.py --catalog $(or $(CATALOG),insurance_dev) \
 	  $(if $(BRONZE),--bronze-only,)
+
+.PHONY: databricks-governance
+databricks-governance: ## Execute governance/unity_catalog.sql against Unity Catalog
+	$(PY) governance/generate_unity_catalog.py --catalog $(or $(CATALOG),insurance_dev)
+	$(PY) scripts/databricks_apply_governance.py --catalog $(or $(CATALOG),insurance_dev) \
+	  $(if $(DRY),--dry-run,)

@@ -32,6 +32,34 @@ from ingestion.config import load_registry  # noqa: E402
 
 OUT = REPO_ROOT / "governance" / "unity_catalog.sql"
 DBT_MODELS = REPO_ROOT / "dbt" / "models"
+MANIFEST = REPO_ROOT / "dbt" / "target" / "manifest.json"
+
+
+def view_models() -> set[str]:
+    """Model names materialised as views, read from the dbt manifest.
+
+    Unity Catalog cannot attach a column mask to a view:
+        EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE
+
+    That is not a gap in coverage. A mask bound to a base TABLE applies to
+    every query that reads it, including through a view -- so masking bronze
+    protects the silver staging views that select from it, without needing
+    (or being able) to bind anything to the views themselves. Emitting those
+    statements anyway would produce a governance artefact that always
+    part-fails, which trains people to ignore its output.
+    """
+    import json
+
+    if not MANIFEST.exists():
+        return set()
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    return {
+        node["name"]
+        for node in manifest.get("nodes", {}).values()
+        if node.get("resource_type") == "model"
+        and (node.get("config") or {}).get("materialized") == "view"
+    }
+
 
 # Groups the generated grants refer to. Kept here rather than in the SQL so the
 # principle -- least privilege, one group per access need -- stays visible.
@@ -121,6 +149,21 @@ def render(columns: list[dict], catalog: str) -> str:
     w("--")
     w(f"-- Generated {datetime.now(UTC):%Y-%m-%d %H:%M UTC}")
     w(f"-- Catalog: {catalog}")
+    w("--")
+    w("-- PREREQUISITES -- neither can be created from SQL:")
+    w("--")
+    w("--   1. A secret scope holding the PII salt. The mask functions below")
+    w("--      read it with secret('insurance', 'pii_salt') rather than")
+    w("--      embedding it, because a salt committed to a governance artefact")
+    w("--      is not a salt. Create it with:")
+    w("--        databricks secrets create-scope insurance")
+    w("--        databricks secrets put-secret insurance pii_salt")
+    w("--      Without it the mask functions fail with INVALID_SECRET_LOOKUP,")
+    w("--      and the column-mask bindings then fail with ROUTINE_NOT_FOUND.")
+    w("--")
+    w("--   2. The groups the grants reference, created at ACCOUNT level via")
+    w("--      SCIM, Terraform or the admin console. Granting to a group that")
+    w("--      does not exist fails with PRINCIPAL_DOES_NOT_EXIST.")
     w(f"-- Classified columns: {len(columns)}")
     w("--")
     w("-- This does not run against OSS Spark; there is no Unity Catalog outside")
@@ -273,12 +316,25 @@ def main() -> int:
     # reads as carelessness in exactly the review where it matters most.
     seen: set[tuple[str, str, str]] = set()
     columns: list[dict] = []
+    views = view_models()
+    skipped_views: set[str] = set()
     for c in collect_from_dbt() + collect_from_sources():
         key = (c["schema"], c["table"], c["column"])
         if key in seen:
             continue
         seen.add(key)
+        if c["table"] in views:
+            # Masks and tags bind to tables, not views. The underlying table's
+            # mask already covers anything selected through the view.
+            skipped_views.add(c["table"])
+            continue
         columns.append(c)
+    if skipped_views:
+        print(
+            f"  skipped {len(skipped_views)} view-materialised model(s): "
+            f"{', '.join(sorted(skipped_views))}"
+        )
+        print("    (a mask on the base table applies through the view)")
 
     OUT.write_text(render(columns, args.catalog), encoding="utf-8")
 

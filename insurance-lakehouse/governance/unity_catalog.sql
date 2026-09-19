@@ -5,9 +5,24 @@
 --   Regenerate: make governance
 --   Source of truth: dbt column `meta` + config/sources.yml
 --
--- Generated 2026-09-19 08:04 UTC
+-- Generated 2026-09-19 18:03 UTC
 -- Catalog: insurance_dev
--- Classified columns: 36
+--
+-- PREREQUISITES -- neither can be created from SQL:
+--
+--   1. A secret scope holding the PII salt. The mask functions below
+--      read it with secret('insurance', 'pii_salt') rather than
+--      embedding it, because a salt committed to a governance artefact
+--      is not a salt. Create it with:
+--        databricks secrets create-scope insurance
+--        databricks secrets put-secret insurance pii_salt
+--      Without it the mask functions fail with INVALID_SECRET_LOOKUP,
+--      and the column-mask bindings then fail with ROUTINE_NOT_FOUND.
+--
+--   2. The groups the grants reference, created at ACCOUNT level via
+--      SCIM, Terraform or the admin console. Granting to a group that
+--      does not exist fails with PRINCIPAL_DOES_NOT_EXIST.
+-- Classified columns: 26
 --
 -- This does not run against OSS Spark; there is no Unity Catalog outside
 -- Databricks. It is generated as a reviewable artefact so the governance
@@ -57,16 +72,6 @@ ALTER TABLE gold.dim_health_profile ALTER COLUMN bmi_band SET TAGS ('pii' = 'tru
 ALTER TABLE gold.dim_health_profile ALTER COLUMN pre_existing_conditions SET TAGS ('pii' = 'true', 'pii_type' = 'health', 'sensitivity' = 'restricted');
 ALTER TABLE gold.dim_vehicle ALTER COLUMN chassis_masked SET TAGS ('pii' = 'true', 'pii_type' = 'chassis', 'sensitivity' = 'medium');
 ALTER TABLE gold.dim_vehicle ALTER COLUMN plate_masked SET TAGS ('pii' = 'true', 'pii_type' = 'plate', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_customers ALTER COLUMN address SET TAGS ('pii' = 'true', 'pii_type' = 'address', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_customers ALTER COLUMN date_of_birth SET TAGS ('pii' = 'true', 'pii_type' = 'dob', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_customers ALTER COLUMN email SET TAGS ('pii' = 'true', 'pii_type' = 'email', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_customers ALTER COLUMN national_id SET TAGS ('pii' = 'true', 'pii_type' = 'national_id', 'sensitivity' = 'high');
-ALTER TABLE silver.stg_customers ALTER COLUMN phone SET TAGS ('pii' = 'true', 'pii_type' = 'phone', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_health_declarations ALTER COLUMN bmi_band SET TAGS ('pii' = 'true', 'pii_type' = 'health', 'sensitivity' = 'restricted');
-ALTER TABLE silver.stg_health_declarations ALTER COLUMN pre_existing_conditions SET TAGS ('pii' = 'true', 'pii_type' = 'health', 'sensitivity' = 'restricted');
-ALTER TABLE silver.stg_partner_policies ALTER COLUMN national_id SET TAGS ('pii' = 'true', 'pii_type' = 'national_id', 'sensitivity' = 'high');
-ALTER TABLE silver.stg_vehicles ALTER COLUMN chassis_no SET TAGS ('pii' = 'true', 'pii_type' = 'chassis', 'sensitivity' = 'medium');
-ALTER TABLE silver.stg_vehicles ALTER COLUMN plate_no SET TAGS ('pii' = 'true', 'pii_type' = 'plate', 'sensitivity' = 'medium');
 
 -- ---------------------------------------------------------------------
 -- 3. Column mask functions
@@ -187,16 +192,6 @@ ALTER TABLE gold.dim_health_profile ALTER COLUMN bmi_band SET MASK mask_health;
 ALTER TABLE gold.dim_health_profile ALTER COLUMN pre_existing_conditions SET MASK mask_health;
 ALTER TABLE gold.dim_vehicle ALTER COLUMN chassis_masked SET MASK mask_chassis;
 ALTER TABLE gold.dim_vehicle ALTER COLUMN plate_masked SET MASK mask_plate;
-ALTER TABLE silver.stg_customers ALTER COLUMN address SET MASK mask_address;
-ALTER TABLE silver.stg_customers ALTER COLUMN date_of_birth SET MASK mask_dob;
-ALTER TABLE silver.stg_customers ALTER COLUMN email SET MASK mask_email;
-ALTER TABLE silver.stg_customers ALTER COLUMN national_id SET MASK mask_national_id;
-ALTER TABLE silver.stg_customers ALTER COLUMN phone SET MASK mask_phone;
-ALTER TABLE silver.stg_health_declarations ALTER COLUMN bmi_band SET MASK mask_health;
-ALTER TABLE silver.stg_health_declarations ALTER COLUMN pre_existing_conditions SET MASK mask_health;
-ALTER TABLE silver.stg_partner_policies ALTER COLUMN national_id SET MASK mask_national_id;
-ALTER TABLE silver.stg_vehicles ALTER COLUMN chassis_no SET MASK mask_chassis;
-ALTER TABLE silver.stg_vehicles ALTER COLUMN plate_no SET MASK mask_plate;
 
 -- ---------------------------------------------------------------------
 -- 4. Row filter: jurisdiction

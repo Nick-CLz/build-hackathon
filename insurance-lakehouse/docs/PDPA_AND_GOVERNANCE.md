@@ -168,3 +168,93 @@ the warehouse quietly diverge and nobody notices until an audit.
 
 That is a control-design argument rather than a data-engineering one, and it is
 the part most data teams get wrong.
+
+---
+
+## 7. Applying this to a real Unity Catalog, and what went wrong
+
+`make databricks-governance` executes the generated SQL statement by statement
+against a live workspace. Running it exposed four things that reading the SQL
+would not have.
+
+### A row filter whose groups do not exist hides everything, silently
+
+The worst finding, and the one to remember.
+
+`filter_by_country` grants visibility to `data_engineers`, `analysts_global`,
+`analysts_th` and `analysts_id`. In a workspace where none of those groups
+exist, every clause evaluates false, so the filter excludes every row — for
+every reader, including the table owner.
+
+```
+gold.fct_claims             0 rows
+gold.fct_written_premium    0 rows
+gold.dim_customer           0 rows
+```
+
+**No error is raised.** The tables look empty. If this happened in production
+the first symptom would be a dashboard showing zero, and the first hypothesis
+would be a broken pipeline — not a governance change made hours earlier by
+someone else.
+
+The applier now refuses to attach a row filter when none of its principals
+resolve, and says why. Attaching one before its groups exist is never correct:
+the fail-safe direction for a filter is *not applied*, because an unapplied
+filter is visible in an audit while an over-applied one looks like data loss.
+
+### Unity Catalog will not mask a view
+
+```
+EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE
+```
+
+All thirteen silver staging models are views, and a column mask binds only to
+a table. This is **not** a coverage gap: a mask on the base table applies to
+every query that reads it, including through a view. Masking bronze therefore
+protects the staging views that select from it.
+
+Tags behave differently and *can* be applied to a view — so discovery works at
+every layer even where enforcement binds one level down. The generator now
+reads materialisations from the dbt manifest and skips view-backed models when
+emitting masks, because a governance artefact that always part-fails trains
+people to ignore its output.
+
+### The salt must exist before the mask function does
+
+The mask functions read the salt with `secret('insurance', 'pii_salt')` rather
+than embedding it — a salt committed to a governance artefact is not a salt.
+Without the scope, `CREATE FUNCTION` fails with `INVALID_SECRET_LOOKUP`, and
+every binding that references it then fails with `ROUTINE_NOT_FOUND`: one
+missing prerequisite, six failures, none of which name the real cause.
+
+Both prerequisites are now stated at the top of the generated file, because
+neither can be created from SQL:
+
+```
+databricks secrets create-scope insurance
+databricks secrets put-secret  insurance pii_salt
+```
+
+### What did apply, and what it proves
+
+On Databricks Free Edition, with no secret scope and no groups:
+
+| | Result |
+|---|---|
+| Column tags | 26/26 applied |
+| Mask functions | 8/9 (national_id needs the secret scope) |
+| Column masks bound | 21/26 (the 5 gaps are the same cause) |
+| Row filter function | created |
+| Row filter bindings | **deliberately skipped** — principals absent |
+| Grants | 0/12 — groups must pre-exist |
+
+Masking is demonstrably live on the columns that bound:
+
+```
+phone_masked  +66****79            email_masked  s***@example.invalid
+```
+
+The masks are enforced by the engine, not by the model: that output is what a
+reader gets from `SELECT *`, through any client, regardless of how the table is
+queried. That is the difference between masking in a dbt model — which protects
+the model — and a Unity Catalog mask, which protects the column.
