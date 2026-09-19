@@ -80,3 +80,65 @@ conflict.
 5. **Move orchestration** to Databricks Jobs or Astronomer via Asset Bundles.
 6. **Then optimise:** liquid clustering, predictive optimization, serverless.
    Optimising before correctness is how you end up with a fast wrong answer.
+
+---
+
+## Verified against a real workspace
+
+Run `make databricks-probe`. The results below are from Databricks **Free
+Edition** (serverless, DBSQL 2026.36), 18 of 19 probes succeeding.
+
+| Capability | Free Edition | Note |
+|---|---|---|
+| Unity Catalog present | yes | `samples`, `system`, `workspace` |
+| Create catalog / schema / Volume | yes | no admin escalation needed |
+| Create Delta table, insert | yes | |
+| Column `SET TAGS` | yes | what `unity_catalog.sql` emits |
+| Create mask function, `SET MASK` | yes | |
+| Create row-filter function, `SET ROW FILTER` | yes | |
+| `GRANT` to a group | yes | |
+| `OPTIMIZE` | yes | |
+| **Liquid clustering (`CLUSTER BY`)** | yes | with no partitioning conflict, unlike local |
+| `DESCRIBE HISTORY` | yes | |
+| **Time travel on a governed table** | **no** | see below |
+
+This corrected an assumption made before probing: account-level group grants
+were expected to require admin rights Free Edition might withhold. They do not.
+Everything the governance layer generates is executable on the free tier.
+
+### The one real constraint, and why it matters
+
+```
+[FAIL] Time travel
+ROW_LEVEL_SECURITY_COLUMN_MASK_FEATURE_NOT_SUPPORTED.TIME_TRAVEL
+```
+
+**A table carrying a row filter or a column mask cannot be read with
+`VERSION AS OF`.** This is not a Free Edition limit; it is how Unity Catalog
+governance and time travel interact, and the probe only found it because it
+attached a mask and a filter *before* attempting the historical read.
+
+The reason is sound once stated: a historical version predates the current
+policy, so serving it would mean either applying today's mask to yesterday's
+schema, or handing back rows the policy exists to withhold. Databricks refuses
+rather than guessing.
+
+Three consequences for this design:
+
+1. **Governed tables are not point-in-time queryable.** `silver_policy_as_of`
+   therefore earns its place: SCD2 validity windows are *data*, and they keep
+   working under a mask where `VERSION AS OF` does not. A design that leaned on
+   time travel for as-of reporting would fail the moment governance was applied
+   — and would fail at exactly the wrong time, when someone adds the mask.
+2. **Right-to-erasure gets simpler, not harder.** The PDPA concern in
+   `docs/PDPA_AND_GOVERNANCE.md` is that time travel resurrects deleted personal
+   data. On a masked table that path is closed for ordinary readers. It is not a
+   substitute for `REORG ... PURGE` and `VACUUM`, because the files are still
+   there and a privileged reader can still reach them — but it narrows exposure.
+3. **Apply masks late in a migration.** Attach governance *after* validating
+   history, or you lose the ability to diff a table against its previous
+   version while checking the port.
+
+**Rollout order, revised by this finding:** load bronze, validate against local
+row counts using time travel, *then* apply `unity_catalog.sql`. Applying
+governance first makes the validation step unavailable.

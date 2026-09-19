@@ -167,11 +167,8 @@ def main() -> int:
             print(f"  {args.catalog}.bronze.{s.name:<28} <- {s.path}")
         return 0
 
-    missing = [
-        k
-        for k in ("DATABRICKS_HOST", "DATABRICKS_HTTP_PATH", "DATABRICKS_TOKEN")
-        if not os.getenv(k)
-    ]
+    # HTTP_PATH is optional: connect() discovers a warehouse when it is unset.
+    missing = [k for k in ("DATABRICKS_HOST", "DATABRICKS_TOKEN") if not os.getenv(k)]
     if missing:
         print("Missing: " + ", ".join(missing) + "  (see .env.example)")
         return 1
