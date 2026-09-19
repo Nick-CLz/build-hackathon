@@ -432,11 +432,7 @@ def emit_day(u: Universe, day: int, out_root: str | None = None) -> dict[str, An
     # Health declarations: their own stream, because underwriting emits them
     # separately from the policy record -- and because sensitive personal data
     # under PDPA is easier to govern when it is not mixed into a general feed.
-    health = [
-        p
-        for p in u.policies
-        if p["emit_day"] == day and p["line_of_business"] == "health"
-    ]
+    health = [p for p in u.policies if p["emit_day"] == day and p["line_of_business"] == "health"]
     p = f"{root}/events/health_declarations/dt={dt}/health_declarations_{stamp}.jsonl"
     _write_jsonl(
         p,
