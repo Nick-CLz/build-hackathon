@@ -23,7 +23,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-REQUIRED = ("DATABRICKS_HOST", "DATABRICKS_HTTP_PATH", "DATABRICKS_TOKEN")
+# HTTP_PATH is deliberately NOT required: it can be discovered from the
+# warehouses API given the token, so the only secret anyone has to paste is the
+# token itself. Fewer things to copy by hand is fewer things to get wrong.
+REQUIRED = ("DATABRICKS_HOST", "DATABRICKS_TOKEN")
 
 
 @dataclass
@@ -48,13 +51,44 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def hostname() -> str:
+    return os.environ["DATABRICKS_HOST"].replace("https://", "").rstrip("/")
+
+
+def discover_http_path() -> str:
+    """Find a usable SQL warehouse when DATABRICKS_HTTP_PATH is not set.
+
+    Prefers a warehouse that is already RUNNING, so the first query does not
+    wait on a cold start; otherwise takes the first one and lets it wake.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"https://{hostname()}/api/2.0/sql/warehouses",
+        headers={"Authorization": f"Bearer {os.environ['DATABRICKS_TOKEN']}"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        warehouses = json.load(resp).get("warehouses", [])
+
+    if not warehouses:
+        raise RuntimeError(
+            "No SQL warehouses in this workspace. Create one in SQL Warehouses, "
+            "or set DATABRICKS_HTTP_PATH by hand."
+        )
+    chosen = next((w for w in warehouses if w.get("state") == "RUNNING"), warehouses[0])
+    path = f"/sql/1.0/warehouses/{chosen['id']}"
+    print(f"  discovered warehouse: {chosen.get('name')} ({chosen.get('state')}) -> {path}")
+    return path
+
+
 def connect():
     from databricks import sql
 
-    host = os.environ["DATABRICKS_HOST"].replace("https://", "").rstrip("/")
+    http_path = os.getenv("DATABRICKS_HTTP_PATH") or discover_http_path()
     return sql.connect(
-        server_hostname=host,
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
+        server_hostname=hostname(),
+        http_path=http_path,
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
 
@@ -81,13 +115,11 @@ def main() -> int:
     missing = [k for k in REQUIRED if not os.getenv(k)]
     if missing:
         print("Missing environment variables: " + ", ".join(missing))
-        print("\nCopy .env.example to .env and fill in:")
-        print("  DATABRICKS_HOST        dbc-xxxxxxxx-xxxx.cloud.databricks.com")
-        print(
-            "  DATABRICKS_HTTP_PATH   /sql/1.0/warehouses/<id>   (SQL Warehouses -> "
-            "your warehouse -> Connection details)"
-        )
-        print("  DATABRICKS_TOKEN       Settings -> Developer -> Access tokens")
+        print("\nSet these in .env (gitignored):")
+        print("  DATABRICKS_HOST   dbc-xxxxxxxx-xxxx.cloud.databricks.com")
+        print("  DATABRICKS_TOKEN  Settings -> Developer -> Access tokens -> Generate")
+        print("\nDATABRICKS_HTTP_PATH is optional -- it is discovered from the")
+        print("warehouses API. Set it only to pin one specific warehouse.")
         return 1
 
     probe_cat = f"{args.catalog}_probe"
