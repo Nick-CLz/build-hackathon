@@ -68,8 +68,22 @@ def discover_http_path() -> str:
         f"https://{hostname()}/api/2.0/sql/warehouses",
         headers={"Authorization": f"Bearer {os.environ['DATABRICKS_TOKEN']}"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        warehouses = json.load(resp).get("warehouses", [])
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            warehouses = json.load(resp).get("warehouses", [])
+    except urllib.error.HTTPError as exc:
+        # A scoped token that authenticates but lacks `sql` fails here with a
+        # bare 403. Databricks says exactly which scope is missing in the body,
+        # so surface that rather than a urllib traceback -- it is the difference
+        # between "something is wrong" and "regenerate the token with sql".
+        body = exc.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(
+            f"Databricks refused the warehouses API ({exc.code}).\n"
+            f"  {body}\n\n"
+            "If the message names a missing scope, the token was created with a\n"
+            "narrower scope than this project needs. Regenerate it with all-apis,\n"
+            "or with: sql (queries), files (Volume upload), unity-catalog (DDL)."
+        ) from None
 
     if not warehouses:
         raise RuntimeError(
@@ -126,7 +140,13 @@ def main() -> int:
     results: list[Probe] = []
 
     print(f"Connecting to {os.environ['DATABRICKS_HOST']} ...")
-    with connect() as conn, conn.cursor() as cur:
+    try:
+        conn = connect()
+    except RuntimeError as exc:
+        print(f"\n{exc}")
+        return 1
+
+    with conn, conn.cursor() as cur:
         results.append(run(cur, "Connect and run SQL", "SELECT 1"))
         results.append(run(cur, "Server version", "SELECT current_version()", fetch=True))
         results.append(run(cur, "Unity Catalog present", "SHOW CATALOGS", fetch=True))
