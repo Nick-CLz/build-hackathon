@@ -1,0 +1,19 @@
+# Without this the build context includes the generated warehouse and the host
+# venv -- hundreds of MB that the daemon has to stream for every build.
+.venv/
+lakehouse/
+reports/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+metastore_db/
+derby.log
+spark-warehouse/
+airflow/.astro/
+.git/
+.env

@@ -1,0 +1,69 @@
+---
+name: insurance_lakehouse
+version: 1.0.0
+config-version: 2
+profile: insurance_lakehouse
+
+model-paths: [models]
+macro-paths: [macros]
+test-paths: [tests]
+snapshot-paths: [snapshots]
+seed-paths: [seeds]
+target-path: target
+clean-targets: [target, dbt_packages, logs]
+
+# Fails with an explanation rather than an opaque UnresolvedRelation when dbt
+# is run from the wrong directory. See macros/assert_bronze_is_reachable.sql.
+on-run-start:
+  - "{{ assert_bronze_is_reachable() }}"
+
+vars:
+  # Reporting currency for every cross-country aggregate.
+  reporting_currency: THB
+  # How far back the incremental claims model re-reads on each run, so that
+  # late-reported claims update the periods they actually belong to.
+  #
+  # 60, not 30, and the number is MEASURED rather than guessed. At 30,
+  # mart_claims_lag reported p99 reporting lag = 60 days with 25 claims
+  # falling beyond the window -- 25 claims whose loss months would stay
+  # permanently understated, because a re-run would never re-read them.
+  # Surfacing that is precisely what the mart is for, and raising the var is
+  # the response. Re-check it as the book changes. The cost is re-reading 60
+  # days of claims per run, which stays cheap because claims are
+  # low-cardinality relative to policies.
+  claims_lookback_days: 60
+  # Salt for hashing national IDs. Overridden from the PII_SALT env var; the
+  # default exists only so `dbt parse` works without a configured environment.
+  pii_salt: "{{ env_var('PII_SALT', 'local-dev-salt-not-for-real-data') }}"
+  bronze_schema: bronze
+
+models:
+  insurance_lakehouse:
+    +file_format: delta
+    # Off for the local target. Persisting docs makes Spark reconcile the
+    # Delta schema into the Derby-backed Hive metastore via ALTER TABLE, which
+    # fails with "types incompatible with the existing columns" whenever a
+    # model's columns change between runs -- printing a Java stack trace in
+    # the middle of an otherwise clean build without failing anything.
+    # Unity Catalog handles this properly, so the databricks target turns it
+    # back on.
+    +persist_docs: {relation: false, columns: false}
+    silver:
+      +schema: silver
+      staging:
+        +materialized: view
+    gold:
+      +schema: gold
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+snapshots:
+  insurance_lakehouse:
+    +target_schema: silver
+    +file_format: delta
+
+seeds:
+  insurance_lakehouse:
+    +schema: seeds

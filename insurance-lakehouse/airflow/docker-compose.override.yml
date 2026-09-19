@@ -1,0 +1,20 @@
+---
+# Astro mounts dags/, plugins/ and include/ automatically. The pipeline also
+# needs the rest of the repo -- the dbt project, conf/, ingestion/ and the
+# generated lakehouse/ -- so the repository root is bind-mounted read-write.
+#
+# Bind-mounting the repo rather than baking it into the image means an edit on
+# the host takes effect on the next task run, which is what makes this usable
+# for development rather than only for deployment.
+x-repo-mount: &repo-mount
+  - ../:/usr/local/airflow/lakehouse_repo:rw
+
+services:
+  scheduler:
+    volumes: *repo-mount
+  triggerer:
+    volumes: *repo-mount
+  api-server:
+    volumes: *repo-mount
+  dag-processor:
+    volumes: *repo-mount

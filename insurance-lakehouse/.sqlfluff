@@ -1,0 +1,63 @@
+[sqlfluff]
+# Jinja templater, not dbt: CI must lint SQL without a warehouse connection or a
+# compiled manifest. The dbt templater would need a working profile and a live
+# Spark session just to lint, which turns a 20-second CI step into a 3-minute one.
+templater = jinja
+dialect = sparksql
+max_line_length = 120
+exclude_rules = ST06, RF01, RF02, RF03, AM04, ST05, CV02, RF04
+# RF01/RF02/RF03: reference resolution needs the real compiled SQL; with the
+#   jinja templater every ref() is a placeholder, so these only produce noise.
+# AM04: "query produces unknown number of columns" -- unavoidable with ref().
+# ST05: subqueries in joins are deliberate in the earned-premium model.
+# ST06: column ordering is chosen for readability, not alphabetically.
+# CV02: coalesce vs ifnull -- both are used intentionally.
+# RF04: flags domain columns that happen to be SQL keywords. A vehicle really
+#   does have a `model`, and renaming it to vehicle_model_name to satisfy a
+#   linter makes the warehouse worse for the people querying it.
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = true
+
+[sqlfluff:templater:jinja:context]
+# Stubs so ref()/source()/var() resolve to something parseable without dbt.
+target_schema = silver
+
+[sqlfluff:indentation]
+indented_joins = false
+indented_ctes = false
+template_blocks_indent = false
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:layout.long_lines]
+ignore_comment_lines = true
+
+[sqlfluff:templater:jinja:macros]
+# Stubs for this project's macros. The jinja templater cannot load dbt macros,
+# so without these every call renders as an undefined variable and the SQL
+# around it becomes unparseable -- producing noise that hides real findings.
+# The stubs only need to produce *parseable* SQL of the right shape; their
+# behaviour is covered by the singular tests in dbt/tests/.
+mask_pii = {% macro mask_pii(col, pii_type) %}{{ col }}{% endmacro %}
+be_to_ce_date = {% macro be_to_ce_date(col) %}cast({{ col }} as date){% endmacro %}
+convert_currency = {% macro convert_currency(amount_col, currency_col, date_col, target=none, fx_alias='fx') %}{{ amount_col }}{% endmacro %}
+fx_join = {% macro fx_join(currency_col, date_col, target=none, fx_alias='fx', fx_relation=none) %}left join fx_rates as fx on 1 = 1{% endmacro %}
+clean_text = {% macro clean_text(col) %}trim({{ col }}){% endmacro %}
+clean_code = {% macro clean_code(col) %}upper(trim({{ col }})){% endmacro %}
+normalise_policy_status = {% macro normalise_policy_status(col) %}upper({{ col }}){% endmacro %}
+partner_code_from_source_file = {% macro partner_code_from_source_file(col='_source_file') %}upper({{ col }}){% endmacro %}
+dedupe_latest = {% macro dedupe_latest(partition_by, order_by, relation_alias='') %}row_number() over (partition by {{ partition_by }} order by {{ order_by }} desc){% endmacro %}

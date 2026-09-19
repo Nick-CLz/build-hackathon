@@ -1,0 +1,241 @@
+---
+version: 2
+
+models:
+  - name: stg_partner_policies
+    description: >
+      Grain: one row per policy_id (latest version). Harmonises three
+      incompatible partner feeds -- differing column names, language, date
+      convention and currency -- into one shape. Dedup keeps the latest per
+      key; see dedupe_latest() for the tie-break rules.
+    columns:
+      - name: policy_id
+        description: Partner's policy number, uppercased and trimmed.
+        data_tests: [unique, not_null]
+      - name: partner_code
+        description: Recovered from the landing path, not from a column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [SIAMGUARD, BKKSURE, THAIVIVAT, KRUNGSRI_GI, NUSANTARA, GARUDA_INS]
+      - name: inception_date
+        description: Buddhist Era converted to Common Era where detected.
+        data_tests:
+          - not_null:
+              config: {severity: warn}
+      - name: policy_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ACTIVE, CANCELLED, EXPIRED, UNKNOWN]
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments: {values: [THB, IDR]}
+      - name: national_id
+        description: Thai national ID or Indonesian NIK. Unmasked at silver by design.
+        meta: {pii: true, pii_type: national_id, sensitivity: high}
+
+  - name: stg_partner_claims
+    description: >
+      Grain: one row per claim_no (latest version). Partner claim files carry no
+      explicit update timestamp, so dedup orders by reported_date and falls back
+      to ingestion order -- weaker than the policy feed's ordering, and stated
+      here so a reader knows which dedup decisions are well-founded.
+    columns:
+      - name: claim_no
+        data_tests: [unique, not_null]
+      - name: reporting_lag_days
+        description: reported_date minus loss_date. Negative values indicate bad dates.
+
+  - name: stg_quotes
+    description: "Grain: one row per quote_id."
+    columns:
+      - name: quote_id
+        data_tests: [unique, not_null]
+      - name: quote_status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [CONVERTED, EXPIRED, REJECTED, LAPSED]}
+
+  - name: stg_endorsements
+    description: >
+      Grain: one row per endorsement_id. effective_date and requested_date are
+      kept separate deliberately -- effective drives exposure, requested drives
+      when we knew. Conflating them is the most common way earned premium
+      silently goes wrong.
+    columns:
+      - name: endorsement_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests:
+          - not_null
+          - relationships:
+              config: {severity: warn}
+              arguments: {to: ref('silver_policies'), field: policy_id}
+
+  - name: stg_premium_payments
+    description: "Grain: one row per payment_id. Negative amounts are legitimate refunds."
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+
+  - name: stg_claims
+    description: "Grain: one row per claim_id, from the internal claims service."
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+
+  - name: stg_policies_cdc
+    description: >
+      Grain: one row per (policy_id, change_ts) -- every change event, not
+      current state. Collapsing happens in silver_policies so history stays
+      available for the snapshot and for auditing what changed when.
+    columns:
+      - name: change_op
+        data_tests:
+          - accepted_values:
+              arguments: {values: ["I", "U", "D"]}
+
+  - name: stg_customers
+    description: "Grain: one row per customer_id. SCD1. PII unmasked at silver by design."
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: national_id
+        description: >
+          ~4% fail the mod-11 checksum on purpose, mirroring real capture error
+          rates. WARN because a handful of bad IDs is a quality signal to track,
+          not a reason to block the build.
+        meta: {pii: true, pii_type: national_id, sensitivity: high}
+        data_tests:
+          - valid_thai_national_id:
+              config: {severity: warn}
+      - name: phone
+        meta: {pii: true, pii_type: phone, sensitivity: medium}
+      - name: email
+        meta: {pii: true, pii_type: email, sensitivity: medium}
+      - name: date_of_birth
+        meta: {pii: true, pii_type: dob, sensitivity: medium}
+      - name: address
+        meta: {pii: true, pii_type: address, sensitivity: medium}
+
+  - name: stg_vehicles
+    description: "Grain: one row per vehicle_id."
+    columns:
+      - name: vehicle_id
+        data_tests: [unique, not_null]
+      - name: plate_no
+        meta: {pii: true, pii_type: plate, sensitivity: medium}
+      - name: chassis_no
+        meta: {pii: true, pii_type: chassis, sensitivity: medium}
+
+  - name: stg_products
+    description: "Grain: one row per product_code."
+    columns:
+      - name: product_code
+        data_tests: [unique, not_null]
+
+  - name: stg_partners
+    description: "Grain: one row per partner_code."
+    columns:
+      - name: partner_code
+        data_tests: [unique, not_null]
+
+  - name: stg_fx_rates
+    description: >
+      Grain: one row per (rate_date, from_currency, to_currency). Carries an
+      identity row THB->THB=1.0 for every date so domestic amounts take the same
+      code path as foreign ones.
+    columns:
+      - name: rate
+        data_tests: [not_null]
+
+  - name: stg_health_declarations
+    description: >
+      Grain: one row per declaration_id. SENSITIVE personal data under PDPA
+      s.26. Values are intact here because silver is the restricted layer;
+      redaction happens at the gold boundary. Access to silver is the primary
+      control, masking in gold the second line.
+    columns:
+      - name: declaration_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests:
+          - relationships:
+              config: {severity: warn}
+              arguments: {to: ref('silver_policies'), field: policy_id}
+      - name: pre_existing_conditions
+        description: Declared conditions. Fully redacted outside restricted models.
+        meta: {pii: true, pii_type: health, sensitivity: restricted}
+      - name: bmi_band
+        meta: {pii: true, pii_type: health, sensitivity: restricted}
+
+  - name: silver_policies
+    description: >
+      Grain: one row per policy_id -- current state. Incremental MERGE on
+      policy_id. CDC wins over partner records where both exist; a policy whose
+      latest CDC op is 'D' is excluded, which is the CDC trap that leaves
+      deleted rows alive downstream forever if missed.
+    columns:
+      - name: policy_id
+        data_tests: [unique, not_null]
+      - name: product_code
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_products'), field: product_code}
+      - name: written_premium_thb
+        description: Written premium converted at the rate on inception date.
+      - name: record_source
+        data_tests:
+          - accepted_values:
+              arguments: {values: [cdc, partner]}
+
+  - name: silver_claims
+    description: >
+      Grain: one row per claim_id. Incremental MERGE with a configurable
+      lookback window (claims_lookback_days, default 30) so late-reported claims
+      update the period they belong to rather than leaving it permanently
+      understated.
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        description: >
+          Orphans are deliberately injected by the generator. WARN, because a
+          claim against an unknown policy is a real integration defect to
+          measure, not a reason to fail the build.
+        data_tests:
+          - relationships:
+              config: {severity: warn}
+              arguments: {to: ref('silver_policies'), field: policy_id}
+
+  - name: silver_premium_payments
+    description: "Grain: one row per payment_id. Incremental MERGE with the same lookback."
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+
+  - name: silver_policy_as_of
+    description: >
+      Grain: one row per (policy_id, valid_from) -- one row per policy version
+      with an explicit validity window. Query with
+      `D >= valid_from and D < coalesce(valid_to, '9999-12-31')` to get the book
+      as it stood on date D.
+    columns:
+      - name: policy_id
+        data_tests: [not_null]
+    data_tests:
+      - no_overlapping_scd2_windows:
+          arguments:
+            key_column: policy_id
+            valid_from_column: valid_from
+            valid_to_column: valid_to
+
+snapshots:
+  - name: policies_snapshot
+    description: >
+      SCD2 history of every policy. Uses the CHECK strategy, not timestamp,
+      because backdated endorsements have effective_date before requested_date
+      and a timestamp strategy would silently skip them.

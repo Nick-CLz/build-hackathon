@@ -1,0 +1,5 @@
+target/
+dbt_packages/
+# {% snapshot %} blocks are not valid standalone Jinja, so the templater
+# cannot parse them. dbt itself validates snapshot syntax at parse time.
+snapshots/
